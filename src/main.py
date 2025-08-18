@@ -1,6 +1,8 @@
 # main.py
 #
-# Main GUI application - now with a functional Analysis Tab layout.
+# Main GUI application
+# MODIFIED: Now creates and manages the ResultsTab and handles the data
+#           flow from the AnalysisTab to the ResultsTab.
 
 import sys
 import tkinter as tk
@@ -12,6 +14,7 @@ import numpy as np
 # Import our tab modules
 from tabs.capture_tab import CaptureTab
 from tabs.analysis_tab import AnalysisTab
+from tabs.results_tab import ResultsTab # <<< NEW: Import ResultsTab
 
 class MainWindow(tk.Tk):
     def __init__(self):
@@ -29,30 +32,41 @@ class MainWindow(tk.Tk):
 
         # --- Create and Add Tabs ---
         self.capture_tab = CaptureTab(self.notebook, {}, self.handle_image_capture)
-        self.analysis_tab = AnalysisTab(self.notebook, {})
-        self.results_frame = ttk.Frame(self.notebook, padding="10") # Results tab is still a placeholder
+        # <<< MODIFIED: Pass the results handler to AnalysisTab >>>
+        self.analysis_tab = AnalysisTab(self.notebook, {}, self.handle_analysis_results)
+        self.results_tab = ResultsTab(self.notebook) # <<< NEW: Create ResultsTab instance
         
         self.notebook.add(self.capture_tab, text='Capture')
         self.notebook.add(self.analysis_tab, text='Analysis')
-        self.notebook.add(self.results_frame, text='Results')
+        self.notebook.add(self.results_tab, text='Results') # <<< MODIFIED: Add the real tab
         
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def handle_image_capture(self, saved_image_path):
-        """
-        This function is the callback for the CaptureTab.
-        It receives the file path of the saved image and displays it.
-        """
-        # The argument is now the file path string sent from the CaptureTab
+        """Callback from CaptureTab when an image is saved."""
         messagebox.showinfo("Image Saved", f"Image successfully saved to:\n{saved_image_path}")
         
-        # This line switches the view to the Analysis tab after the user clicks "OK".
-        # self.notebook.select(self.analysis_tab) <!-- This line must not be deleted or altered -->
+    def handle_analysis_results(self, results_package):
+        """
+        <<< NEW >>>
+        This is the callback for the AnalysisTab.
+        It receives the complete results package and passes it to the ResultsTab.
+        """
+        if results_package.get("error"):
+            messagebox.showerror("Analysis Error", results_package["error"])
+            return
+            
+        # Pass the data to the results tab for display
+        self.results_tab.display_results(results_package)
+        
+        # Switch the view to the Results tab
+        self.notebook.select(self.results_tab)
         
     def on_closing(self):
         """Called when the user closes the window."""
         self.capture_tab.cleanup()
         self.analysis_tab.cleanup()
+        self.results_tab.cleanup()
         self.destroy()
 
 # --- Main execution block ---
