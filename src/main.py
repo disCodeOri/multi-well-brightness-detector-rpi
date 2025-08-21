@@ -1,8 +1,6 @@
 # main.py
 #
 # Main GUI application
-# MODIFIED: Now creates and manages the ResultsTab and handles the data
-#           flow from the AnalysisTab to the ResultsTab.
 
 import sys
 import tkinter as tk
@@ -11,10 +9,10 @@ from tkinter import messagebox
 from PIL import Image, ImageTk
 import numpy as np
 
-# Import our tab modules
+# Tab modules imports
 from tabs.capture_tab import CaptureTab
 from tabs.analysis_tab import AnalysisTab
-from tabs.results_tab import ResultsTab # <<< NEW: Import ResultsTab
+from tabs.results_tab import ResultsTab
 
 class MainWindow(tk.Tk):
     def __init__(self):
@@ -32,13 +30,12 @@ class MainWindow(tk.Tk):
 
         # --- Create and Add Tabs ---
         self.capture_tab = CaptureTab(self.notebook, {}, self.handle_image_capture)
-        # <<< MODIFIED: Pass the results handler to AnalysisTab >>>
         self.analysis_tab = AnalysisTab(self.notebook, {}, self.handle_analysis_results)
-        self.results_tab = ResultsTab(self.notebook) # <<< NEW: Create ResultsTab instance
+        self.results_tab = ResultsTab(self.notebook)
         
         self.notebook.add(self.capture_tab, text='Capture')
         self.notebook.add(self.analysis_tab, text='Analysis')
-        self.notebook.add(self.results_tab, text='Results') # <<< MODIFIED: Add the real tab
+        self.notebook.add(self.results_tab, text='Results')
         
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -47,11 +44,6 @@ class MainWindow(tk.Tk):
         messagebox.showinfo("Image Saved", f"Image successfully saved to:\n{saved_image_path}")
         
     def handle_analysis_results(self, results_package):
-        """
-        <<< NEW >>>
-        This is the callback for the AnalysisTab.
-        It receives the complete results package and passes it to the ResultsTab.
-        """
         if results_package.get("error"):
             messagebox.showerror("Analysis Error", results_package["error"])
             return

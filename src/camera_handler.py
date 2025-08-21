@@ -9,7 +9,7 @@ import cv2
 import threading
 import time
 import sys
-import os # <<< NEW: Import os for file system checks
+import os
 
 class CameraHandler:
     STATUS_STOPPED = "STOPPED"

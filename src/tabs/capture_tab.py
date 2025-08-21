@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 import threading
 import cv2
-import numpy as np  # <<< NEW: Import NumPy for robust image math
+import numpy as np
 
 from camera_handler import CameraHandler
 from video_recorder import VideoRecorder
@@ -50,7 +50,6 @@ class CaptureTab(ttk.Frame):
         self.camera_label.photo_image = None
 
     def create_control_panel(self):
-        # This method is unchanged from the previous step
         controls_frame = ttk.LabelFrame(self, text="Controls", padding="10")
         controls_frame.grid(row=0, column=1, sticky="ns", padx=10, pady=10)
         action_frame = ttk.Frame(controls_frame)
@@ -91,7 +90,6 @@ class CaptureTab(ttk.Frame):
 
 
     def connect_controls(self):
-        # This method is unchanged
         self.stream_button.config(command=self.toggle_stream)
         self.capture_button.config(command=self.capture_image_and_notify)
         self.record_button.config(command=self.toggle_recording)
@@ -99,18 +97,15 @@ class CaptureTab(ttk.Frame):
         self.resolution_selector.bind("<<ComboboxSelected>>", self.on_setting_change)
 
     def populate_camera_list_async(self):
-        # This method is unchanged
         self.stream_button.config(state=tk.DISABLED)
         self.camera_selector.set("Scanning for cameras...")
         threading.Thread(target=self._camera_list_worker, daemon=True).start()
 
     def _camera_list_worker(self):
-        # This method is unchanged
         available_cameras = self.camera.list_available_cameras()
         self.after(0, self._update_camera_list_ui, available_cameras)
 
     def _update_camera_list_ui(self, available_cameras):
-        # This method is unchanged
         if not available_cameras:
             self.camera_selector.set("No cameras found")
             self.camera_selector.config(state=tk.DISABLED)
@@ -122,14 +117,12 @@ class CaptureTab(ttk.Frame):
             self.stream_button.config(state=tk.NORMAL)
 
     def on_setting_change(self, event=None):
-        # This method is unchanged
         if self.camera.get_status() == CameraHandler.STATUS_RUNNING:
             self.camera_label.config(image='', text="Restarting Stream...")
             self.toggle_stream() # Stop
             self.after(100, self.toggle_stream) # Start again
 
     def toggle_stream(self):
-        # This method is unchanged
         is_running = self.camera.get_status() != CameraHandler.STATUS_STOPPED
         
         if is_running:
@@ -144,7 +137,6 @@ class CaptureTab(ttk.Frame):
             self.contrast_slider.config(state=tk.DISABLED)
             self.brightness_var.set(0)
             self.contrast_var.set(1.0)
-            # <<< FIX: Use image='' instead of image=None to properly clear the image reference >>>
             self.camera_label.config(image='', text="Camera is off.")
             self.camera_label.photo_image = None
             self.set_input_state(tk.NORMAL)
@@ -164,7 +156,6 @@ class CaptureTab(ttk.Frame):
                 messagebox.showerror("Camera Error", "Could not start camera thread.")
 
     def check_stream_status(self):
-        # This method is unchanged
         status = self.camera.get_status()
         if status == CameraHandler.STATUS_RUNNING:
             self.stream_button.config(text="Stop Stream", state=tk.NORMAL)
@@ -187,7 +178,6 @@ class CaptureTab(ttk.Frame):
             self.status_checker_id = self.after(100, self.check_stream_status)
 
     def set_input_state(self, state):
-        # This method is unchanged
         widget_state = "readonly" if state == tk.NORMAL else tk.DISABLED
         self.camera_selector.config(state=widget_state)
         self.resolution_selector.config(state=widget_state)
@@ -254,7 +244,6 @@ class CaptureTab(ttk.Frame):
             messagebox.showwarning("Capture Failed", "Could not capture an image.")
             
     def toggle_recording(self):
-        # This method is unchanged
         if self.recorder and self.recorder.is_recording():
             self.recorder.stop()
             self.recorder = None
@@ -275,7 +264,6 @@ class CaptureTab(ttk.Frame):
                 self.recorder = None
             
     def cleanup(self):
-        # This method is unchanged
         if self.update_id: self.after_cancel(self.update_id)
         if self.status_checker_id: self.after_cancel(self.status_checker_id)
         self.camera.stop_stream()

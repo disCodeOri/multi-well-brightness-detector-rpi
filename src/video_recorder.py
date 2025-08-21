@@ -1,8 +1,7 @@
 # video_recorder.py
 #
-# A dedicated class to handle the logic of recording video frames to a file
-# using OpenCV's VideoWriter. This keeps the recording logic separate
-# from the GUI and camera handling.
+# A dedicated class to handle the logic of recording video frames to a file.
+# Uses OpenCV's VideoWriter.
 
 import cv2
 import os

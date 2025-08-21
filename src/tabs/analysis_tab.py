@@ -1,7 +1,4 @@
 # tabs/analysis_tab.py
-#
-# MODIFIED: This tab no longer displays results itself. It now runs the full
-# analysis backend and passes the complete results package to a callback function.
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -12,21 +9,18 @@ import os
 import cv2
 from PIL import Image, ImageTk
 import numpy as np
-
-# Import the analysis functions from your backend script
 import well_analyzer
 
 class AnalysisTab(ttk.Frame):
-    # <<< MODIFIED: __init__ now accepts a results_callback >>>
     def __init__(self, parent, config, results_callback):
         super().__init__(parent)
         
         self.config = config
-        self.results_callback = results_callback # Store the callback function
+        self.results_callback = results_callback
         self.video_path = None
         self.results_queue = queue.Queue()
 
-        # --- Video Playback State (unchanged) ---
+        # --- Video Playback State ---
         self.video_capture = None
         self.is_playing = False
         self.stop_playback_flag = threading.Event()
@@ -38,7 +32,7 @@ class AnalysisTab(ttk.Frame):
         self.video_lock = threading.Lock()
         self._after_id = None
 
-        # --- Layout (unchanged, but report section is now just a placeholder) ---
+        # --- Layout ---
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=0)
         self.rowconfigure(0, weight=1)
@@ -58,7 +52,6 @@ class AnalysisTab(ttk.Frame):
 
         self.progress_bar = ttk.Progressbar(self, orient='horizontal', mode='indeterminate')
 
-    # create_preview_section is unchanged
     def create_preview_section(self, parent_pane):
         preview_frame = ttk.LabelFrame(parent_pane, text="Media Preview", padding="10")
         preview_frame.columnconfigure(0, weight=1); preview_frame.rowconfigure(0, weight=1)
@@ -76,7 +69,6 @@ class AnalysisTab(ttk.Frame):
         self.loop_video_checkbutton = ttk.Checkbutton(playback_controls_frame, text="Loop", variable=self.loop_video_var, state=tk.DISABLED)
         self.loop_video_checkbutton.grid(row=0, column=2, padx=(5,0))
 
-    # create_controls_section is unchanged
     def create_controls_section(self):
         controls_frame = ttk.LabelFrame(self, text="Analysis Controls", padding="10")
         controls_frame.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=10)
@@ -140,7 +132,6 @@ class AnalysisTab(ttk.Frame):
 
     def _analysis_thread_worker(self, video_path, threshold, min_area, metric_mode, sample_rate):
         """
-        <<< MODIFIED >>>
         Calls the new orchestrator function and puts the entire result package in the queue.
         """
         try:
@@ -154,7 +145,6 @@ class AnalysisTab(ttk.Frame):
 
     def check_analysis_queue(self):
         """
-        <<< MODIFIED >>>
         Checks for the results package and passes it to the main window's callback.
         """
         try:
@@ -171,8 +161,6 @@ class AnalysisTab(ttk.Frame):
         except queue.Empty:
             self.after(100, self.check_analysis_queue)
 
-    # All video playback and media loading methods (load_media, clear_media, 
-    # toggle_play_pause, etc.) remain unchanged.
     def load_media(self):
         filepath = filedialog.askopenfilename(title="Select a Video File", filetypes=(("Video Files", "*.mp4 *.avi *.mov"), ("All files", "*.*")))
         if not filepath: return
