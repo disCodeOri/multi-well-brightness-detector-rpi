@@ -19,7 +19,33 @@ class MainWindow(tk.Tk):
         super().__init__()
 
         self.title("Well Intensity Analyzer")
-        self.geometry("1400x900")
+
+        # --- IMPROVED WINDOW SIZING WITH 16:9 RATIO ---
+        # Get the screen dimensions
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        # Define minimum window dimensions (suitable for RPi screens)
+        min_width = 800
+        min_height = int(min_width * (9/16))  # Calculate height based on 16:9 ratio
+        self.minsize(min_width, min_height)
+
+        # Calculate initial window size (70% of screen width, maintaining 16:9 ratio)
+        window_width = min(int(screen_width * 0.7), screen_width - 100)  # Leave some margin
+        window_height = int(window_width * (9/16))
+
+        # Ensure window isn't too tall for the screen
+        if window_height > (screen_height - 100):  # Leave some margin
+            window_height = screen_height - 100
+            window_width = int(window_height * (16/9))  # Recalculate width to maintain ratio
+
+        # Center the window on the screen
+        position_x = (screen_width - window_width) // 2
+        position_y = (screen_height - window_height) // 2
+
+        # Set the initial size and position of the window
+        self.geometry(f"{window_width}x{window_height}+{position_x}+{position_y}")
+        # --- END OF WINDOW SIZING ---
 
         self.style = ttk.Style(self)
         self.style.theme_use('clam')

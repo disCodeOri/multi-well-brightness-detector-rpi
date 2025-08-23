@@ -2,12 +2,6 @@
 #
 # A script to create a synthetic video of glowing wells for testing the
 # well_analyzer.py script.
-#
-# Author: [Your Name]
-# Date: [Current Date]
-#
-# This script will generate an MP4 file that simulates the output of your
-# chemiluminescence experiment.
 
 import cv2
 import numpy as np
