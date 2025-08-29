@@ -21,7 +21,7 @@ WELL_GRID = (3, 4)
 WELL_RADIUS = 30  # pixels
 PEAK_BRIGHTNESS = 250  # How bright the wells get (0-255)
 BACKGROUND_COLOR = (20, 20, 20) # Dark gray, not pure black
-NOISE_LEVEL = 10 # Add some random noise to make it more realistic
+NOISE_LEVEL = 10  # Set to 0 for no noise, positive number for noise
 
 # How long the glow pulse lasts for each well, in frames. A larger number
 # means a slower, longer glow.
@@ -93,9 +93,10 @@ def generate_video():
             # Add a slight blur to make the glow softer
             frame = cv2.GaussianBlur(frame, (5, 5), 0)
 
-        # Add some random noise to the entire frame
-        noise = np.random.randint(-NOISE_LEVEL, NOISE_LEVEL, frame.shape, dtype=np.int16)
-        frame = np.clip(frame.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        # Add some random noise to the entire frame only if NOISE_LEVEL > 0
+        if NOISE_LEVEL > 0:
+            noise = np.random.randint(-NOISE_LEVEL, NOISE_LEVEL, frame.shape, dtype=np.int16)
+            frame = np.clip(frame.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
         # Write the frame to the video file
         out.write(frame)
