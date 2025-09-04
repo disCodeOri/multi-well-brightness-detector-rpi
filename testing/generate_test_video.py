@@ -19,8 +19,8 @@ DURATION_SECONDS = 10
 # Define the grid of wells (rows, columns)
 WELL_GRID = (3, 4) 
 WELL_RADIUS = 30  # pixels
-PEAK_BRIGHTNESS = 250  # How bright the wells get (0-255)
-BACKGROUND_COLOR = (20, 20, 20) # Dark gray, not pure black
+PEAK_BRIGHTNESS = 255  # How bright the wells get (0-255)
+BACKGROUND_COLOR = (0, 0, 0) # Pure black
 NOISE_LEVEL = 10  # Set to 0 for no noise, positive number for noise
 
 # How long the glow pulse lasts for each well, in frames. A larger number
