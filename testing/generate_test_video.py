@@ -9,7 +9,7 @@ import os
 import random
 
 # --- CONFIGURATION ---
-OUTPUT_FILENAME = 'test_wells_video.mp4'
+OUTPUT_FILENAME = 'test_wells_video.avi'
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
 FPS = 30
@@ -21,7 +21,7 @@ WELL_GRID = (3, 4)
 WELL_RADIUS = 30  # pixels
 PEAK_BRIGHTNESS = 255  # How bright the wells get (0-255)
 BACKGROUND_COLOR = (0, 0, 0) # Pure black
-NOISE_LEVEL = 10  # Set to 0 for no noise, positive number for noise
+NOISE_LEVEL = 0  # Set to 0 for no noise, positive number for noise
 
 # How long the glow pulse lasts for each well, in frames. A larger number
 # means a slower, longer glow.
@@ -43,14 +43,11 @@ def generate_video():
 
     # --- Video Writer Setup ---
     # Define the codec and create VideoWriter object
-    # <<< FIXED: Use 'avc1' (H.264) for better compatibility and to avoid decoder errors >>>
-    fourcc = cv2.VideoWriter_fourcc(*'avc1') # Codec for .mp4 files
+    fourcc = cv2.VideoWriter_fourcc(*'FFV1') # Codec for .avi files ("avc1" codec is for .mp4)
     out = cv2.VideoWriter(OUTPUT_FILENAME, fourcc, FPS, (VIDEO_WIDTH, VIDEO_HEIGHT))
     
     if not out.isOpened():
         print("Error: Could not open video writer.")
-        print("This might be because the 'avc1' (H.264) codec is not available on your system.")
-        print("Consider installing a codec pack like K-Lite (on Windows) or ensuring FFmpeg is correctly installed.")
         return
 
     # --- Pre-calculate Well Positions and Peak Times ---
