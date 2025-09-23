@@ -292,7 +292,7 @@ class ResultsTab(ttk.Frame):
                     "total_frames": int(self.results_data.get("total_frames", 0)),
                     "fps": float(self.results_data.get("fps", 0.0)),
                     "duration_seconds": float(self.results_data.get("duration_seconds", 0.0)),
-                    "metric_mode_used": self.results_data.get("metric_mode"),
+                    "metric_mode_used_for_ui": self.results_data.get("metric_mode"),
                     "sample_rate": int(self.results_data.get("sample_rate", 1))
                 },
                 "peak_results": peak_results_native,
