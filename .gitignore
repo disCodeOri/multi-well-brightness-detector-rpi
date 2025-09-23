@@ -1,5 +1,10 @@
 pastebin.md
 *.mp4
 *.avi
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
 __pycache__/
 backlog.md
