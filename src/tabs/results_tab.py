@@ -233,7 +233,7 @@ class ResultsTab(ttk.Frame):
             frame = cv2.imread(source_path)
             if frame is None: return None
 
-        # --- NEW: Mark the brightest pixel if in 'peak' mode ---
+        # Mark the brightest pixel if in 'peak' mode
         if self.results_data.get("metric_mode") == 'peak':
             peak_location = peak_info.get('peak_location')
             if peak_location:
@@ -268,23 +268,110 @@ class ResultsTab(ttk.Frame):
         self.photo_image = ImageTk.PhotoImage(image=adjusted_pil)
         self.preview_label.config(image=self.photo_image, text="")
 
+    def _rects_overlap(self, r1, r2):
+        """Helper function to check if two rectangles (x, y, w, h) overlap."""
+        return not (r1[0] + r1[2] < r2[0] or
+                    r1[0] > r2[0] + r2[2] or
+                    r1[1] + r1[3] < r2[1] or
+                    r1[1] > r2[1] + r2[3])
+
+    def _generate_annotated_well_map(self):
+        """
+        Generates the well map with non-overlapping labels and improved connecting lines.
+        """
+        max_frame = self.results_data['max_intensity_frame']
+        rois = self.results_data['well_rois']
+        annotated_image = cv2.cvtColor(max_frame, cv2.COLOR_GRAY2BGR)
+
+        placed_text_rects = []
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        box_thickness = 2
+        font_thickness = box_thickness
+        text_color = (0, 255, 0)
+        line_color = (0, 255, 0) # Use the same bright green for the line
+        offset_x, offset_y = 12, 12 # Increased offset for better spacing
+
+        for i, (x, y, w, h) in enumerate(rois):
+            cv2.rectangle(annotated_image, (x, y), (x + w, y + h), text_color, box_thickness)
+            
+            well_text = f'Well {i+1}'
+            (text_w, text_h), baseline = cv2.getTextSize(well_text, font, font_scale, font_thickness)
+            box_center = (x + w // 2, y + h // 2)
+
+            # Define potential positions for the text and precise line start/end points
+            pos_x_tr, pos_y_tr = x + w + offset_x, y - text_h - offset_y
+            pos_x_tl, pos_y_tl = x - text_w - offset_x, y - text_h - offset_y
+            pos_x_br, pos_y_br = x + w + offset_x, y + h + offset_y
+            pos_x_bl, pos_y_bl = x - text_w - offset_x, y + h + offset_y
+            pos_x_ca, pos_y_ca = box_center[0] - text_w//2, y - text_h - offset_y
+            pos_x_cb, pos_y_cb = box_center[0] - text_w//2, y + h + offset_y + text_h
+            
+            candidate_positions = [
+                # Top-right
+                {'pos': (pos_x_tr, pos_y_tr), 'line_start': (x + w, y), 'line_end': (pos_x_tr, pos_y_tr + text_h)},
+                # Top-left
+                {'pos': (pos_x_tl, pos_y_tl), 'line_start': (x, y), 'line_end': (pos_x_tl + text_w, pos_y_tl + text_h)},
+                # Bottom-right
+                {'pos': (pos_x_br, pos_y_br), 'line_start': (x + w, y + h), 'line_end': (pos_x_br, pos_y_br)},
+                # Bottom-left
+                {'pos': (pos_x_bl, pos_y_bl), 'line_start': (x, y + h), 'line_end': (pos_x_bl + text_w, pos_y_bl)},
+                # Centered Above
+                {'pos': (pos_x_ca, pos_y_ca), 'line_start': (box_center[0], y), 'line_end': (box_center[0], pos_y_ca + text_h)},
+                # Centered Below
+                {'pos': (pos_x_cb, pos_y_cb), 'line_start': (box_center[0], y+h), 'line_end': (box_center[0], pos_y_cb)}
+            ]
+
+            text_placed = False
+            for cand in candidate_positions:
+                pos_x, pos_y = cand['pos']
+                # Bounding box of the text itself
+                text_rect = (pos_x, pos_y, text_w, text_h)
+
+                # Check for overlap with other text boxes and other well boxes
+                is_overlapping = False
+                for placed_rect in placed_text_rects + rois:
+                    if self._rects_overlap(text_rect, placed_rect):
+                        is_overlapping = True
+                        break
+                
+                if not is_overlapping:
+                    text_origin = (pos_x, pos_y + text_h)
+                    # Use new start/end points and matching thickness
+                    cv2.line(annotated_image, cand['line_start'], cand['line_end'], line_color, box_thickness)
+                    cv2.putText(annotated_image, well_text, text_origin, font, font_scale, text_color, font_thickness)
+                    placed_text_rects.append(text_rect)
+                    text_placed = True
+                    break
+            
+            if not text_placed:
+                # Fallback: if no clear spot is found, draw text inside the box (less ideal)
+                cv2.putText(annotated_image, well_text, (x + 5, y + 20), font, 0.5, text_color, 1)
+
+        return annotated_image
+
     def view_well_map(self):
         if not self.results_data:
             return
         try:
-            # Generate the annotated well map image, similar to save_well_map
-            max_frame = self.results_data['max_intensity_frame']
-            rois = self.results_data['well_rois']
-            annotated_image = cv2.cvtColor(max_frame, cv2.COLOR_GRAY2BGR)
-            for i, (x, y, w, h) in enumerate(rois):
-                cv2.rectangle(annotated_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                cv2.putText(annotated_image, f'Well {i+1}', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-            # Convert to PIL Image and load it into the preview pane
-            pil_image = Image.fromarray(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB))
+            annotated_image_np = self._generate_annotated_well_map()
+            pil_image = Image.fromarray(cv2.cvtColor(annotated_image_np, cv2.COLOR_BGR2RGB))
             self._load_image_to_preview(pil_image)
         except Exception as e:
             messagebox.showerror("Error", f"Could not generate the well map view: {e}")
+
+    def save_well_map(self):
+        if not self.results_data:
+            return
+        filepath = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Image", "*.png")])
+        if not filepath:
+            return
+        try:
+            annotated_image_np = self._generate_annotated_well_map()
+            Image.fromarray(cv2.cvtColor(annotated_image_np, cv2.COLOR_BGR2RGB)).save(filepath)
+            messagebox.showinfo("Success", f"Well map saved successfully to:\n{filepath}")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Could not save the well map: {e}")
 
     def save_selected_frame(self):
         if not self.current_pil_image:
@@ -319,25 +406,6 @@ class ResultsTab(ttk.Frame):
             messagebox.showinfo("Success", f"Successfully saved {num_wells} peak frames to:\n{directory}")
         except Exception as e:
             messagebox.showerror("Save Error", f"An error occurred: {e}")
-            
-    def save_well_map(self):
-        if not self.results_data:
-            return
-        filepath = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Image", "*.png")])
-        if not filepath:
-            return
-        try:
-            max_frame = self.results_data['max_intensity_frame']
-            rois = self.results_data['well_rois']
-            annotated_image = cv2.cvtColor(max_frame, cv2.COLOR_GRAY2BGR)
-            for i, (x, y, w, h) in enumerate(rois):
-                cv2.rectangle(annotated_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                cv2.putText(annotated_image, f'Well {i+1}', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            Image.fromarray(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)).save(filepath)
-            messagebox.showinfo("Success", f"Well map saved successfully to:\n{filepath}")
-        except Exception as e:
-            messagebox.showerror("Save Error", f"Could not save the well map: {e}")
 
     def _generate_default_filename(self, extension):
         if not self.results_data:
