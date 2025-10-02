@@ -115,6 +115,8 @@ class ResultsTab(ttk.Frame):
         self.save_frame_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.save_all_frames_btn = ttk.Button(button_frame, text="Save All Peak Frames", state=tk.DISABLED, command=self.save_all_peak_frames)
         self.save_all_frames_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        self.view_map_btn = ttk.Button(button_frame, text="View Well Map", state=tk.DISABLED, command=self.view_well_map)
+        self.view_map_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.save_map_btn = ttk.Button(button_frame, text="Save Well Map", state=tk.DISABLED, command=self.save_well_map)
         self.save_map_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.save_json_btn = ttk.Button(button_frame, text="Save Data (JSON)", state=tk.DISABLED, command=self.save_data_json)
@@ -156,6 +158,7 @@ class ResultsTab(ttk.Frame):
             self.tree.selection_set(first_item)
             self.tree.focus(first_item)
         self.set_controls_state(tk.NORMAL)
+        self.view_well_map()
 
     def _update_intensity_plot(self):
         if not self.results_data:
@@ -264,6 +267,24 @@ class ResultsTab(ttk.Frame):
             adjusted_pil.thumbnail((lw, lh), Image.Resampling.LANCZOS)
         self.photo_image = ImageTk.PhotoImage(image=adjusted_pil)
         self.preview_label.config(image=self.photo_image, text="")
+
+    def view_well_map(self):
+        if not self.results_data:
+            return
+        try:
+            # Generate the annotated well map image, similar to save_well_map
+            max_frame = self.results_data['max_intensity_frame']
+            rois = self.results_data['well_rois']
+            annotated_image = cv2.cvtColor(max_frame, cv2.COLOR_GRAY2BGR)
+            for i, (x, y, w, h) in enumerate(rois):
+                cv2.rectangle(annotated_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(annotated_image, f'Well {i+1}', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            # Convert to PIL Image and load it into the preview pane
+            pil_image = Image.fromarray(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB))
+            self._load_image_to_preview(pil_image)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not generate the well map view: {e}")
 
     def save_selected_frame(self):
         if not self.current_pil_image:
@@ -471,6 +492,7 @@ class ResultsTab(ttk.Frame):
 
         self.brightness_slider.config(state=state)
         self.contrast_slider.config(state=state)
+        self.view_map_btn.config(state=state)
         self.save_map_btn.config(state=state)
         self.save_json_btn.config(state=state)
         self.save_excel_btn.config(state=state)
