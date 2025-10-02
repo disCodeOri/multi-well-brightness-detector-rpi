@@ -74,7 +74,6 @@ def find_well_locations(video_path, background_level, min_area):
 
 
 def track_well_intensities(video_path, well_rois, metric_mode='average', sample_rate=1):
-    # This function remains unchanged
     print(f"Step 2: Tracking intensities (mode: {metric_mode})...")
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened(): return []
@@ -87,8 +86,21 @@ def track_well_intensities(video_path, well_rois, metric_mode='average', sample_
             gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             for i, (x, y, w, h) in enumerate(well_rois):
                 well_region = gray_frame[y:y+h, x:x+w]
-                intensity = np.mean(well_region) if metric_mode == 'average' else np.max(well_region)
-                intensity_data[i].append(intensity)
+                if metric_mode == 'average':
+                    intensity = np.mean(well_region)
+                    intensity_data[i].append(intensity)
+                else:  # 'peak' mode
+                    intensity = np.max(well_region)
+                    # --- Find location of the peak pixel ---
+                    # Find the 1D index of the max value
+                    max_loc_1d = np.argmax(well_region)
+                    # Convert the 1D index to 2D coordinates (row, col) relative to the well_region
+                    max_loc_relative = np.unravel_index(max_loc_1d, well_region.shape)
+                    # Convert to absolute frame coordinates: (x, y) for drawing
+                    peak_coord_abs = (x + max_loc_relative[1], y + max_loc_relative[0])
+                    # Store both intensity and location
+                    intensity_data[i].append((intensity, peak_coord_abs))
+
         frame_count += 1
     cap.release()
     print(f"-> Intensity tracking complete.")
@@ -96,17 +108,26 @@ def track_well_intensities(video_path, well_rois, metric_mode='average', sample_
 
 
 def analyze_peaks(intensity_data, metric_mode='average', sample_rate=1):
-    # This function remains unchanged
     print(f"Step 3: Analyzing for peak intensities...")
     peak_results = []
     for i, well_data in enumerate(intensity_data):
         if not well_data: continue
-        well_data_np = np.array(well_data)
-        max_intensity = np.max(well_data_np)
-        sampled_frame_index = np.argmax(well_data_np)
+        
+        peak_location = None
+        if metric_mode == 'average':
+            well_data_np = np.array(well_data)
+            max_intensity = np.max(well_data_np)
+            sampled_frame_index = np.argmax(well_data_np)
+        else:  # Peak mode, well_data is a list of (intensity, (x, y)) tuples
+            max_item = max(well_data, key=lambda item: item[0])
+            max_intensity = max_item[0]
+            peak_location = max_item[1] # The (x, y) coordinate tuple
+            sampled_frame_index = well_data.index(max_item)
+
         actual_frame_index = sampled_frame_index * sample_rate
         peak_results.append({
-            'well_id': i, 'intensity': max_intensity, 'frame': actual_frame_index, 'metric_mode': metric_mode
+            'well_id': i, 'intensity': max_intensity, 'frame': actual_frame_index,
+            'metric_mode': metric_mode, 'peak_location': peak_location
         })
     print("-> Analysis complete.")
     return peak_results
@@ -127,10 +148,17 @@ def run_full_analysis(video_path, background_level, min_area, metric_mode, sampl
     if not well_rois:
         return {"error": "No wells were detected. Try adjusting the Min Well Area."}
 
+    # Track both datasets so we can export them later
     average_intensity_data = track_well_intensities(video_path, well_rois, 'average', sample_rate)
-    peak_intensity_data = track_well_intensities(video_path, well_rois, 'peak', sample_rate)
-    primary_intensity_data = average_intensity_data if metric_mode == 'average' else peak_intensity_data
+    peak_intensity_data_with_locs = track_well_intensities(video_path, well_rois, 'peak', sample_rate)
+
+    # For analysis, we only need the primary one. For export, we pass both.
+    primary_intensity_data = average_intensity_data if metric_mode == 'average' else peak_intensity_data_with_locs
     peak_results = analyze_peaks(primary_intensity_data, metric_mode, sample_rate)
+
+    # For the data package, we need a list of just the intensity values for plotting
+    peak_intensity_data_values_only = [[item[0] for item in well] for well in peak_intensity_data_with_locs]
+    primary_intensity_data_for_plot = average_intensity_data if metric_mode == 'average' else peak_intensity_data_values_only
 
     summary_text = f"--- Analysis Report ---\n"
     summary_text += f"Video Source: {os.path.basename(video_path)}\n"
@@ -140,8 +168,8 @@ def run_full_analysis(video_path, background_level, min_area, metric_mode, sampl
         summary_text += f"Well {result['well_id'] + 1}: Intensity of {result['intensity']:.2f} at Frame {result['frame']}\n"
 
     master_results = {
-        "numerical_data": peak_results, "intensity_data": primary_intensity_data,
-        "average_intensity_data": average_intensity_data, "peak_intensity_data": peak_intensity_data,
+        "numerical_data": peak_results, "intensity_data": primary_intensity_data_for_plot,
+        "average_intensity_data": average_intensity_data, "peak_intensity_data": peak_intensity_data_values_only,
         "well_rois": well_rois, "max_intensity_frame": max_intensity_frame,
         "summary_text": summary_text, "video_path": video_path, "sample_rate": sample_rate,
         "metric_mode": metric_mode, "analysis_timestamp": datetime.now().isoformat(),
@@ -169,19 +197,33 @@ def run_single_image_analysis(image_path, background_level, min_area, metric_mod
     if not well_rois:
         return {"error": "No wells were detected in the image."}
 
-    # Step 2: "Track" intensities (for a single image, this is just one measurement per well)
-    intensity_data = []
-    for (x, y, w, h) in well_rois:
-        well_region = gray_image[y:y+h, x:x+w]
-        intensity = np.mean(well_region) if metric_mode == 'average' else np.max(well_region)
-        intensity_data.append([intensity]) # Pack as a list with one item for consistency
-
-    # Step 3: "Analyze Peaks" (the peak is just the single value we measured)
+    # Step 2 & 3: Measure intensity and find peak locations in a single pass
     peak_results = []
-    for i, well_data in enumerate(intensity_data):
+    average_intensity_data = []
+    peak_intensity_data = []
+
+    for i, (x, y, w, h) in enumerate(well_rois):
+        well_region = gray_image[y:y+h, x:x+w]
+        
+        # Calculate both metrics for the data package
+        avg_intensity = np.mean(well_region)
+        peak_intensity = np.max(well_region)
+        average_intensity_data.append([avg_intensity])
+        peak_intensity_data.append([peak_intensity])
+
+        # Determine the primary metric and location for the main results
+        intensity_to_report = peak_intensity if metric_mode == 'peak' else avg_intensity
+        peak_location = None
+        if metric_mode == 'peak':
+            max_loc_relative = np.unravel_index(np.argmax(well_region), well_region.shape)
+            peak_location = (x + max_loc_relative[1], y + max_loc_relative[0])
+
         peak_results.append({
-            'well_id': i, 'intensity': well_data[0], 'frame': 0, 'metric_mode': metric_mode
+            'well_id': i, 'intensity': intensity_to_report, 'frame': 0,
+            'metric_mode': metric_mode, 'peak_location': peak_location
         })
+
+    primary_intensity_data = peak_intensity_data if metric_mode == 'peak' else average_intensity_data
 
     # Step 4: Assemble the master results dictionary, mimicking the video format
     summary_text = f"--- Analysis Report ---\n"
@@ -192,8 +234,8 @@ def run_single_image_analysis(image_path, background_level, min_area, metric_mod
         summary_text += f"Well {result['well_id'] + 1}: Intensity of {result['intensity']:.2f}\n"
 
     master_results = {
-        "numerical_data": peak_results, "intensity_data": intensity_data,
-        "average_intensity_data": intensity_data, "peak_intensity_data": intensity_data,
+        "numerical_data": peak_results, "intensity_data": primary_intensity_data,
+        "average_intensity_data": average_intensity_data, "peak_intensity_data": peak_intensity_data,
         "well_rois": well_rois,
         "max_intensity_frame": gray_image, # For an image, this is just the image itself
         "summary_text": summary_text,
@@ -210,22 +252,23 @@ def run_single_image_analysis(image_path, background_level, min_area, metric_mod
 def main():
     """Main function for standalone testing."""
     print("--- TESTING VIDEO ANALYSIS ---")
-    video_results = run_full_analysis(VIDEO_PATH, DEFAULT_BACKGROUND_LEVEL, MIN_WELL_AREA, 'average', SAMPLE_RATE)
+    video_results = run_full_analysis(VIDEO_PATH, DEFAULT_BACKGROUND_LEVEL, MIN_WELL_AREA, 'peak', SAMPLE_RATE)
     if video_results.get("error"):
         print(f"ERROR: {video_results['error']}")
     else:
         print("\n--- Standalone Video Run Report ---")
         print(video_results['summary_text'])
+        print(video_results['numerical_data'][0]) # Print first result to see new data
 
     print("\n\n--- TESTING IMAGE ANALYSIS ---")
-    # You would need to create a test image for this to work
     if os.path.exists(IMAGE_PATH):
-        image_results = run_single_image_analysis(IMAGE_PATH, DEFAULT_BACKGROUND_LEVEL, MIN_WELL_AREA, 'average')
+        image_results = run_single_image_analysis(IMAGE_PATH, DEFAULT_BACKGROUND_LEVEL, MIN_WELL_AREA, 'peak')
         if image_results.get("error"):
             print(f"ERROR: {image_results['error']}")
         else:
             print("\n--- Standalone Image Run Report ---")
             print(image_results['summary_text'])
+            print(image_results['numerical_data'][0]) # Print first result
     else:
         print(f"Test image not found at '{IMAGE_PATH}', skipping image analysis test.")
 

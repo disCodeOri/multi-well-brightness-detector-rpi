@@ -138,7 +138,6 @@ class ResultsTab(ttk.Frame):
         self.clear_results()
         self.results_data = results_package
         
-        # --- MODIFIED: Update tree headings and content based on result type ---
         is_video = self.results_data.get('total_frames', 1) > 1
         self.tree.heading("Intensity", text="Peak Intensity" if is_video else "Intensity")
         for item in self.results_data['numerical_data']:
@@ -159,7 +158,6 @@ class ResultsTab(ttk.Frame):
         self.set_controls_state(tk.NORMAL)
 
     def _update_intensity_plot(self):
-        # --- MODIFIED: Show a bar chart for images, line plot for videos ---
         if not self.results_data:
             return
         self.ax.clear()
@@ -167,7 +165,7 @@ class ResultsTab(ttk.Frame):
         is_video = self.results_data.get('total_frames', 1) > 1
         
         if is_video:
-            # Existing time-series plot for videos
+            # Time-series plot for videos
             intensity_data = self.results_data['intensity_data']
             peak_results = self.results_data['numerical_data']
             sample_rate = self.results_data['sample_rate']
@@ -184,7 +182,7 @@ class ResultsTab(ttk.Frame):
             self.ax.set_ylabel('Brightness')
             self.ax.legend()
         else:
-            # New bar chart for single images
+            # Bar chart for single images
             results = self.results_data['numerical_data']
             well_labels = [f"Well {r['well_id'] + 1}" for r in results]
             intensities = [r['intensity'] for r in results]
@@ -211,11 +209,10 @@ class ResultsTab(ttk.Frame):
                 self._load_image_to_preview(pil_image)
 
     def _generate_peak_frame_image(self, well_index):
-        # --- MODIFIED: Handle both video and single image sources ---
         if not self.results_data:
             return None
         
-        source_path = self.results_data['video_path'] # This key holds path for both videos and images
+        source_path = self.results_data['video_path']
         peak_info = self.results_data['numerical_data'][well_index]
         roi = self.results_data['well_rois'][well_index]
         is_video = self.results_data.get('total_frames', 1) > 1
@@ -224,18 +221,23 @@ class ResultsTab(ttk.Frame):
         if is_video:
             frame_idx = peak_info['frame']
             cap = cv2.VideoCapture(source_path)
-            if not cap.isOpened():
-                return None
+            if not cap.isOpened(): return None
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             cap.release()
-            if not ret:
-                return None
-        else: # Is single image
+            if not ret: return None
+        else:
             frame = cv2.imread(source_path)
-            if frame is None:
-                return None
+            if frame is None: return None
 
+        # --- NEW: Mark the brightest pixel if in 'peak' mode ---
+        if self.results_data.get("metric_mode") == 'peak':
+            peak_location = peak_info.get('peak_location')
+            if peak_location:
+                # Draw a small, visible circle at the peak location
+                # Using a contrasting color like cyan (B,G,R) = (255, 255, 0)
+                cv2.circle(frame, center=peak_location, radius=8, color=(255, 255, 0), thickness=2)
+        
         (x, y, w, h) = roi
         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
         info_text = f"Well {well_index+1}: {peak_info['intensity']:.2f}"
@@ -317,7 +319,6 @@ class ResultsTab(ttk.Frame):
             messagebox.showerror("Save Error", f"Could not save the well map: {e}")
 
     def _generate_default_filename(self, extension):
-        # --- MODIFIED: New helper to create descriptive default filenames ---
         if not self.results_data:
             return f"analysis.{extension}"
         
@@ -326,7 +327,6 @@ class ResultsTab(ttk.Frame):
         
         is_video = self.results_data.get('total_frames', 1) > 1
         if is_video:
-            # A more robust solution would pass the calibration value to the results_data package
             return f"{base_name}_{metric}_video.{extension}"
         else:
             return f"{base_name}_{metric}_image.{extension}"
@@ -345,17 +345,15 @@ class ResultsTab(ttk.Frame):
             return
             
         try:
-            # --- MODIFIED: Conditionally include intensity_timeseries ---
             is_video = self.results_data.get('total_frames', 1) > 1
             
-            peak_results_native = [
-                {
-                    'well_id': int(item['well_id']),
-                    'intensity': float(item['intensity']),
-                    'frame': int(item['frame']),
-                    'metric_mode': item['metric_mode']
-                } for item in self.results_data.get("numerical_data", [])
-            ]
+            # Use a deep copy to avoid modifying the original data
+            numerical_data_copy = [dict(item) for item in self.results_data.get("numerical_data", [])]
+            for item in numerical_data_copy:
+                 # Ensure all numpy types are converted to native python types for JSON serialization
+                item['well_id'] = int(item['well_id'])
+                item['intensity'] = float(item['intensity'])
+                item['frame'] = int(item['frame'])
 
             output_data = {
                 "analysis_info": {
@@ -367,7 +365,7 @@ class ResultsTab(ttk.Frame):
                     "metric_mode_used": self.results_data.get("metric_mode"),
                     "sample_rate": int(self.results_data.get("sample_rate", 1))
                 },
-                "peak_results": peak_results_native,
+                "peak_results": numerical_data_copy,
                 "well_rois": [
                     {"well_id": i, "x": r[0], "y": r[1], "width": r[2], "height": r[3]}
                     for i, r in enumerate(self.results_data.get("well_rois", []))
@@ -467,7 +465,6 @@ class ResultsTab(ttk.Frame):
         self.set_controls_state(tk.DISABLED)
 
     def set_controls_state(self, state):
-        # --- MODIFIED: Conditionally disable frame-saving buttons ---
         is_video = False
         if state == tk.NORMAL and self.results_data:
             is_video = self.results_data.get('total_frames', 1) > 1
