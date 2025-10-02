@@ -101,10 +101,9 @@ class AnalysisTab(ttk.Frame):
         self.run_button.config(command=self.start_analysis)
         
     def load_media(self):
-        # --- MODIFIED to accept both image and video files ---
         filetypes = (
-            ("All Media Files", "*.mp4 *.avi *.mov *.png *.jpg *.jpeg *.bmp"),
-            ("Video Files", "*.mp4 *.avi *.mov"),
+            ("All Media Files", "*.mp4 *.avi *.mov *.gif *.png *.jpg *.jpeg *.bmp"),
+            ("Video Files", "*.mp4 *.avi *.mov *.gif"),
             ("Image Files", "*.png *.jpg *.jpeg *.bmp")
         )
         filepath = filedialog.askopenfilename(title="Select a Media File", filetypes=filetypes)
@@ -115,7 +114,7 @@ class AnalysisTab(ttk.Frame):
         file_ext = os.path.splitext(self.media_path)[1].lower()
 
         try:
-            if file_ext in ['.mp4', '.avi', '.mov']:
+            if file_ext in ['.mp4', '.avi', '.mov', '.gif']:
                 self.is_image_mode = False
                 with self.video_lock:
                     self.video_capture = cv2.VideoCapture(self.media_path)
