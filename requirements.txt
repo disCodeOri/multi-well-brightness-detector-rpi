@@ -1,0 +1,6 @@
+numpy
+opencv-python
+Pillow
+matplotlib
+openpyxl
+picamera2
