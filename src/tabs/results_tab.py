@@ -32,6 +32,8 @@ class ResultsTab(ttk.Frame):
         self._resize_img_job_id = None
         self._resize_plot_job_id = None
         
+        self.is_showing_well_map = False
+        
         self.brightness_var = tk.DoubleVar(value=0)
         self.contrast_var = tk.DoubleVar(value=1.0)
         
@@ -65,18 +67,23 @@ class ResultsTab(ttk.Frame):
         self.tree.pack(expand=True, fill='both')
         self.tree.bind('<<TreeviewSelect>>', self.on_well_select)
         preview_frame = ttk.LabelFrame(top_pane, text="Preview", padding=5)
-        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.columnconfigure(1, weight=1)
         preview_frame.rowconfigure(0, weight=1)
         top_pane.add(preview_frame, weight=3)
         self.preview_label = ttk.Label(preview_frame, text="No results loaded.", anchor=tk.CENTER)
         self.preview_label.grid(row=0, column=0, columnspan=2, sticky="nsew")
         self.preview_label.bind('<Configure>', self.on_preview_resize)
-        ttk.Label(preview_frame, text="Brightness:").grid(row=1, column=0, sticky='e', pady=(5,0))
+
+        ttk.Label(preview_frame, text="Action:").grid(row=1, column=0, sticky='e', pady=(5,0))
+        self.map_context_button = ttk.Button(preview_frame, text="View Well Map", state=tk.DISABLED)
+        self.map_context_button.grid(row=1, column=1, sticky='ew', padx=5, pady=(5,0))
+
+        ttk.Label(preview_frame, text="Brightness:").grid(row=2, column=0, sticky='e', pady=(5,0))
         self.brightness_slider = ttk.Scale(preview_frame, from_=-100, to=100, orient=tk.HORIZONTAL, variable=self.brightness_var, state=tk.DISABLED)
-        self.brightness_slider.grid(row=1, column=1, sticky='ew', padx=5, pady=(5,0))
-        ttk.Label(preview_frame, text="Contrast:").grid(row=2, column=0, sticky='e')
+        self.brightness_slider.grid(row=2, column=1, sticky='ew', padx=5, pady=(5,0))
+        ttk.Label(preview_frame, text="Contrast:").grid(row=3, column=0, sticky='e')
         self.contrast_slider = ttk.Scale(preview_frame, from_=0.1, to=3.0, orient=tk.HORIZONTAL, variable=self.contrast_var, state=tk.DISABLED)
-        self.contrast_slider.grid(row=2, column=1, sticky='ew', padx=5)
+        self.contrast_slider.grid(row=3, column=1, sticky='ew', padx=5)
 
     def create_bottom_pane(self):
         bottom_container = ttk.Frame(self.main_pane)
@@ -115,10 +122,6 @@ class ResultsTab(ttk.Frame):
         self.save_frame_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.save_all_frames_btn = ttk.Button(button_frame, text="Save All Peak Frames", state=tk.DISABLED, command=self.save_all_peak_frames)
         self.save_all_frames_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        self.view_map_btn = ttk.Button(button_frame, text="View Well Map", state=tk.DISABLED, command=self.view_well_map)
-        self.view_map_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        self.save_map_btn = ttk.Button(button_frame, text="Save Well Map", state=tk.DISABLED, command=self.save_well_map)
-        self.save_map_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.save_json_btn = ttk.Button(button_frame, text="Save Data (JSON)", state=tk.DISABLED, command=self.save_data_json)
         self.save_json_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.save_excel_btn = ttk.Button(button_frame, text="Save Data (Excel)", state=tk.DISABLED, command=self.save_data_excel)
@@ -126,6 +129,133 @@ class ResultsTab(ttk.Frame):
         self.clear_btn = ttk.Button(button_frame, text="Clear Results", state=tk.DISABLED, command=self.clear_results)
         self.clear_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         
+    def display_results(self, results_package):
+        self.clear_results()
+        self.results_data = results_package
+        
+        is_video = self.results_data.get('total_frames', 1) > 1
+        self.tree.heading("Intensity", text="Peak Intensity" if is_video else "Intensity")
+        for item in self.results_data['numerical_data']:
+            self.tree.insert('', tk.END, values=(f"Well {item['well_id']+1}", f"{item['intensity']:.2f}", item['frame'] if is_video else "-"))
+            
+        self.summary_text.config(state=tk.NORMAL)
+        self.summary_text.insert(tk.END, self.results_data['summary_text'])
+        self.summary_text.config(state=tk.DISABLED)
+        self._update_intensity_plot()
+        
+        self.set_controls_state(tk.NORMAL)
+
+        self.view_well_map()
+        
+        if self.tree.get_children():
+            first_item = self.tree.get_children()[0]
+            self.tree.focus(first_item)
+
+    def on_well_select(self, event):
+        selected_items = self.tree.selection()
+        if not selected_items: return
+        
+        item_data = self.tree.item(selected_items[0])
+        well_id_str = item_data['values'][0]
+        well_index = int(well_id_str.split(' ')[1]) - 1
+        
+        if self.results_data:
+            pil_image = self._generate_peak_frame_image(well_index)
+            if pil_image:
+                self._load_image_to_preview(pil_image)
+                self.is_showing_well_map = False
+                self._update_map_context_button()
+                self.set_controls_state(tk.NORMAL)
+
+    def view_well_map(self):
+        if not self.results_data: return
+        try:
+            annotated_image_np = self._generate_annotated_well_map()
+            pil_image = Image.fromarray(cv2.cvtColor(annotated_image_np, cv2.COLOR_BGR2RGB))
+            self._load_image_to_preview(pil_image)
+            self.is_showing_well_map = True
+            self._update_map_context_button()
+            self.set_controls_state(tk.NORMAL)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not generate the well map view: {e}")
+
+    def save_well_map(self):
+        if not self.current_pil_image or not self.is_showing_well_map:
+            messagebox.showerror("Error", "Well map is not currently being viewed.")
+            return
+        
+        self.save_selected_frame(is_map=True)
+
+    def save_selected_frame(self, is_map=False):
+        if not self.current_pil_image: return
+        
+        file_type_name = "Well Map Image" if is_map else "Frame Image"
+        default_ext = ".png"
+        file_types = [("PNG", "*.png"), ("JPEG", "*.jpg")]
+
+        filepath = filedialog.asksaveasfilename(defaultextension=default_ext, filetypes=file_types, title=f"Save {file_type_name}")
+        if not filepath: return
+        
+        try:
+            brightness = self.brightness_var.get()
+            contrast = self.contrast_var.get()
+            img_np = np.array(self.current_pil_image).astype(np.int16)
+            adjusted_np = np.clip(img_np * contrast + brightness, 0, 255).astype(np.uint8)
+            Image.fromarray(adjusted_np).save(filepath)
+            messagebox.showinfo("Success", f"Image saved successfully to: {filepath}")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Could not save the image: {e}")
+
+    def _update_map_context_button(self):
+        if self.is_showing_well_map:
+            self.map_context_button.config(text="Save Well Map", command=self.save_well_map)
+        else:
+            self.map_context_button.config(text="View Well Map", command=self.view_well_map)
+
+    def clear_results(self):
+        self.results_data = None
+        self.current_pil_image = None
+        self.photo_image = None
+        self.is_showing_well_map = False
+        self.tree.selection_remove(self.tree.selection())
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.preview_label.config(image='', text="No results loaded.")
+        self.summary_text.config(state=tk.NORMAL)
+        self.summary_text.delete('1.0', tk.END)
+        self.summary_text.config(state=tk.DISABLED)
+        self.brightness_var.set(0)
+        self.contrast_var.set(1.0)
+        self.ax.clear()
+        self.ax.set_title('Intensity Plot')
+        self.ax.set_xlabel('')
+        self.ax.set_ylabel('')
+        self.canvas.draw()
+        self.set_controls_state(tk.DISABLED)
+        self.map_context_button.config(text="View Well Map")
+
+    def set_controls_state(self, state):
+        is_video = False
+        if state == tk.NORMAL and self.results_data:
+            is_video = self.results_data.get('total_frames', 1) > 1
+        else:
+            state = tk.DISABLED
+
+        self.brightness_slider.config(state=state)
+        self.contrast_slider.config(state=state)
+        self.map_context_button.config(state=state)
+        self.save_json_btn.config(state=state)
+        self.clear_btn.config(state=state)
+        
+        excel_state = state if OPENPYXL_AVAILABLE else tk.DISABLED
+        self.save_excel_btn.config(state=excel_state)
+
+        save_frame_state = tk.NORMAL if (state == tk.NORMAL and not self.is_showing_well_map) else tk.DISABLED
+        self.save_frame_btn.config(state=save_frame_state)
+        
+        save_all_state = tk.NORMAL if (state == tk.NORMAL and is_video) else tk.DISABLED
+        self.save_all_frames_btn.config(state=save_all_state)
+    
     def on_preview_resize(self, event=None):
         if self._resize_img_job_id:
             self.after_cancel(self._resize_img_job_id)
@@ -135,40 +265,12 @@ class ResultsTab(ttk.Frame):
         if self._resize_plot_job_id:
             self.after_cancel(self._resize_plot_job_id)
         self._resize_plot_job_id = self.after(300, self._update_intensity_plot)
-            
-    def display_results(self, results_package):
-        self.clear_results()
-        self.results_data = results_package
-        
-        is_video = self.results_data.get('total_frames', 1) > 1
-        self.tree.heading("Intensity", text="Peak Intensity" if is_video else "Intensity")
-        for item in self.results_data['numerical_data']:
-            self.tree.insert('', tk.END, values=(
-                f"Well {item['well_id']+1}",
-                f"{item['intensity']:.2f}",
-                item['frame'] if is_video else "-"
-            ))
-            
-        self.summary_text.config(state=tk.NORMAL)
-        self.summary_text.insert(tk.END, self.results_data['summary_text'])
-        self.summary_text.config(state=tk.DISABLED)
-        self._update_intensity_plot()
-        if self.tree.get_children():
-            first_item = self.tree.get_children()[0]
-            self.tree.selection_set(first_item)
-            self.tree.focus(first_item)
-        self.set_controls_state(tk.NORMAL)
-        self.view_well_map()
 
     def _update_intensity_plot(self):
-        if not self.results_data:
-            return
+        if not self.results_data: return
         self.ax.clear()
-        
         is_video = self.results_data.get('total_frames', 1) > 1
-        
         if is_video:
-            # Time-series plot for videos
             intensity_data = self.results_data['intensity_data']
             peak_results = self.results_data['numerical_data']
             sample_rate = self.results_data['sample_rate']
@@ -178,49 +280,26 @@ class ResultsTab(ttk.Frame):
                 self.ax.plot(frame_numbers, well_data, label=f'Well {i+1}')
                 for peak in peak_results:
                     if peak['well_id'] == i:
-                        self.ax.plot(peak['frame'], peak['intensity'], 'ro', markersize=8)
-                        break
+                        self.ax.plot(peak['frame'], peak['intensity'], 'ro', markersize=8); break
             self.ax.set_title('Well Intensity vs. Time', fontsize=12)
-            self.ax.set_xlabel('Frame Number')
-            self.ax.set_ylabel('Brightness')
-            self.ax.legend()
+            self.ax.set_xlabel('Frame Number'); self.ax.set_ylabel('Brightness'); self.ax.legend()
         else:
-            # Bar chart for single images
             results = self.results_data['numerical_data']
             well_labels = [f"Well {r['well_id'] + 1}" for r in results]
             intensities = [r['intensity'] for r in results]
             self.ax.bar(well_labels, intensities, color='cyan')
             self.ax.set_title('Well Intensity', fontsize=12)
-            self.ax.set_xlabel('Well ID')
-            self.ax.set_ylabel('Brightness')
-            self.ax.tick_params(axis='x', rotation=45)
-
-        self.ax.grid(True, linestyle='--', alpha=0.6)
-        self.fig.tight_layout()
-        self.canvas.draw()
+            self.ax.set_xlabel('Well ID'); self.ax.set_ylabel('Brightness'); self.ax.tick_params(axis='x', rotation=45)
+        self.ax.grid(True, linestyle='--', alpha=0.6); self.fig.tight_layout(); self.canvas.draw()
         
-    def on_well_select(self, event):
-        selected_items = self.tree.selection()
-        if not selected_items:
-            return
-        item_data = self.tree.item(selected_items[0])
-        well_id_str = item_data['values'][0]
-        well_index = int(well_id_str.split(' ')[1]) - 1
-        if self.results_data:
-            pil_image = self._generate_peak_frame_image(well_index)
-            if pil_image:
-                self._load_image_to_preview(pil_image)
-
     def _generate_peak_frame_image(self, well_index):
-        if not self.results_data:
-            return None
-        
+        if not self.results_data: return None
         source_path = self.results_data['video_path']
-        peak_info = self.results_data['numerical_data'][well_index]
+        peak_info = next((item for item in self.results_data['numerical_data'] if item['well_id'] == well_index), None)
+        if not peak_info: return None
         roi = self.results_data['well_rois'][well_index]
         is_video = self.results_data.get('total_frames', 1) > 1
         frame = None
-
         if is_video:
             frame_idx = peak_info['frame']
             cap = cv2.VideoCapture(source_path)
@@ -233,14 +312,10 @@ class ResultsTab(ttk.Frame):
             frame = cv2.imread(source_path)
             if frame is None: return None
 
-        # Mark the brightest pixel if in 'peak' mode
         if self.results_data.get("metric_mode") == 'peak':
             peak_location = peak_info.get('peak_location')
             if peak_location:
-                # Draw a small, visible circle at the peak location
-                # Using a contrasting color like cyan (B,G,R) = (255, 255, 0)
                 cv2.circle(frame, center=peak_location, radius=8, color=(255, 255, 0), thickness=2)
-        
         (x, y, w, h) = roi
         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
         info_text = f"Well {well_index+1}: {peak_info['intensity']:.2f}"
@@ -254,34 +329,43 @@ class ResultsTab(ttk.Frame):
         self.apply_brightness_contrast()
     
     def apply_brightness_contrast(self, event=None):
-        if self.current_pil_image is None:
-            return
-        brightness = self.brightness_var.get()
-        contrast = self.contrast_var.get()
+        if self.current_pil_image is None: return
+        brightness = self.brightness_var.get(); contrast = self.contrast_var.get()
         img_np = np.array(self.current_pil_image).astype(np.int16)
         adjusted_np = np.clip(img_np * contrast + brightness, 0, 255).astype(np.uint8)
         adjusted_pil = Image.fromarray(adjusted_np)
         self.preview_label.update_idletasks()
         lw, lh = self.preview_label.winfo_width(), self.preview_label.winfo_height()
-        if lw > 1 and lh > 1:
-            adjusted_pil.thumbnail((lw, lh), Image.Resampling.LANCZOS)
+        if lw > 1 and lh > 1: adjusted_pil.thumbnail((lw, lh), Image.Resampling.LANCZOS)
         self.photo_image = ImageTk.PhotoImage(image=adjusted_pil)
         self.preview_label.config(image=self.photo_image, text="")
 
     def _rects_overlap(self, r1, r2):
-        """Helper function to check if two rectangles (x, y, w, h) overlap."""
         return not (r1[0] + r1[2] < r2[0] or
                     r1[0] > r2[0] + r2[2] or
                     r1[1] + r1[3] < r2[1] or
                     r1[1] > r2[1] + r2[3])
-
+    
+    # --- MODIFIED ---
     def _generate_annotated_well_map(self):
         """
-        Generates the well map with non-overlapping labels and improved connecting lines.
+        Generates the well map with non-overlapping labels.
+        Also draws peak pixel markers if the analysis was run in peak mode.
         """
         max_frame = self.results_data['max_intensity_frame']
         rois = self.results_data['well_rois']
         annotated_image = cv2.cvtColor(max_frame, cv2.COLOR_GRAY2BGR)
+
+        # --- NEW: Draw peak location circles if in peak mode ---
+        if self.results_data.get("metric_mode") == 'peak':
+            peak_data = self.results_data.get('numerical_data', [])
+            for item in peak_data:
+                peak_location = item.get('peak_location')
+                if peak_location:
+                    # Use the same style as the single-well preview for consistency
+                    # BGR color for Cyan is (255, 255, 0)
+                    cv2.circle(annotated_image, center=peak_location, radius=8, color=(255, 255, 0), thickness=2)
+        # --- END NEW SECTION ---
 
         placed_text_rects = []
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -289,17 +373,15 @@ class ResultsTab(ttk.Frame):
         box_thickness = 2
         font_thickness = box_thickness
         text_color = (0, 255, 0)
-        line_color = (0, 255, 0) # Use the same bright green for the line
-        offset_x, offset_y = 12, 12 # Increased offset for better spacing
+        line_color = (0, 255, 0)
+        offset_x, offset_y = 12, 12
 
         for i, (x, y, w, h) in enumerate(rois):
             cv2.rectangle(annotated_image, (x, y), (x + w, y + h), text_color, box_thickness)
-            
             well_text = f'Well {i+1}'
             (text_w, text_h), baseline = cv2.getTextSize(well_text, font, font_scale, font_thickness)
             box_center = (x + w // 2, y + h // 2)
-
-            # Define potential positions for the text and precise line start/end points
+            
             pos_x_tr, pos_y_tr = x + w + offset_x, y - text_h - offset_y
             pos_x_tl, pos_y_tl = x - text_w - offset_x, y - text_h - offset_y
             pos_x_br, pos_y_br = x + w + offset_x, y + h + offset_y
@@ -308,36 +390,22 @@ class ResultsTab(ttk.Frame):
             pos_x_cb, pos_y_cb = box_center[0] - text_w//2, y + h + offset_y + text_h
             
             candidate_positions = [
-                # Top-right
                 {'pos': (pos_x_tr, pos_y_tr), 'line_start': (x + w, y), 'line_end': (pos_x_tr, pos_y_tr + text_h)},
-                # Top-left
                 {'pos': (pos_x_tl, pos_y_tl), 'line_start': (x, y), 'line_end': (pos_x_tl + text_w, pos_y_tl + text_h)},
-                # Bottom-right
                 {'pos': (pos_x_br, pos_y_br), 'line_start': (x + w, y + h), 'line_end': (pos_x_br, pos_y_br)},
-                # Bottom-left
                 {'pos': (pos_x_bl, pos_y_bl), 'line_start': (x, y + h), 'line_end': (pos_x_bl + text_w, pos_y_bl)},
-                # Centered Above
                 {'pos': (pos_x_ca, pos_y_ca), 'line_start': (box_center[0], y), 'line_end': (box_center[0], pos_y_ca + text_h)},
-                # Centered Below
                 {'pos': (pos_x_cb, pos_y_cb), 'line_start': (box_center[0], y+h), 'line_end': (box_center[0], pos_y_cb)}
             ]
 
             text_placed = False
             for cand in candidate_positions:
                 pos_x, pos_y = cand['pos']
-                # Bounding box of the text itself
                 text_rect = (pos_x, pos_y, text_w, text_h)
-
-                # Check for overlap with other text boxes and other well boxes
-                is_overlapping = False
-                for placed_rect in placed_text_rects + rois:
-                    if self._rects_overlap(text_rect, placed_rect):
-                        is_overlapping = True
-                        break
+                is_overlapping = any(self._rects_overlap(text_rect, placed_rect) for placed_rect in placed_text_rects + rois)
                 
                 if not is_overlapping:
                     text_origin = (pos_x, pos_y + text_h)
-                    # Use new start/end points and matching thickness
                     cv2.line(annotated_image, cand['line_start'], cand['line_end'], line_color, box_thickness)
                     cv2.putText(annotated_image, well_text, text_origin, font, font_scale, text_color, font_thickness)
                     placed_text_rects.append(text_rect)
@@ -345,104 +413,49 @@ class ResultsTab(ttk.Frame):
                     break
             
             if not text_placed:
-                # Fallback: if no clear spot is found, draw text inside the box (less ideal)
                 cv2.putText(annotated_image, well_text, (x + 5, y + 20), font, 0.5, text_color, 1)
 
         return annotated_image
-
-    def view_well_map(self):
-        if not self.results_data:
-            return
-        try:
-            annotated_image_np = self._generate_annotated_well_map()
-            pil_image = Image.fromarray(cv2.cvtColor(annotated_image_np, cv2.COLOR_BGR2RGB))
-            self._load_image_to_preview(pil_image)
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not generate the well map view: {e}")
-
-    def save_well_map(self):
-        if not self.results_data:
-            return
-        filepath = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Image", "*.png")])
-        if not filepath:
-            return
-        try:
-            annotated_image_np = self._generate_annotated_well_map()
-            Image.fromarray(cv2.cvtColor(annotated_image_np, cv2.COLOR_BGR2RGB)).save(filepath)
-            messagebox.showinfo("Success", f"Well map saved successfully to:\n{filepath}")
-        except Exception as e:
-            messagebox.showerror("Save Error", f"Could not save the well map: {e}")
-
-    def save_selected_frame(self):
-        if not self.current_pil_image:
-            return
-        filepath = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")])
-        if not filepath:
-            return
-        try:
-            brightness = self.brightness_var.get()
-            contrast = self.contrast_var.get()
-            img_np = np.array(self.current_pil_image).astype(np.int16)
-            adjusted_np = np.clip(img_np * contrast + brightness, 0, 255).astype(np.uint8)
-            Image.fromarray(adjusted_np).save(filepath)
-            messagebox.showinfo("Success", f"Image saved successfully to: {filepath}")
-        except Exception as e:
-            messagebox.showerror("Save Error", f"Could not save the image: {e}")
-
+        
     def save_all_peak_frames(self):
-        if not self.results_data:
-            return
+        if not self.results_data: return
         directory = filedialog.askdirectory(title="Select Directory to Save All Frames")
-        if not directory:
-            return
+        if not directory: return
         try:
-            num_wells = len(self.results_data['numerical_data'])
+            num_wells = len(self.results_data['well_rois'])
             for i in range(num_wells):
                 pil_image = self._generate_peak_frame_image(i)
                 if pil_image:
                     filename = f'peak_frame_well_{i+1}.png'
                     dest_path = os.path.join(directory, filename)
                     pil_image.save(dest_path)
-            messagebox.showinfo("Success", f"Successfully saved {num_wells} peak frames to:\n{directory}")
+            messagebox.showinfo("Success", f"Successfully saved peak frames to:\n{directory}")
         except Exception as e:
             messagebox.showerror("Save Error", f"An error occurred: {e}")
 
     def _generate_default_filename(self, extension):
-        if not self.results_data:
-            return f"analysis.{extension}"
-        
+        if not self.results_data: return f"analysis.{extension}"
         base_name = os.path.splitext(os.path.basename(self.results_data.get("video_path", "analysis")))[0]
         metric = self.results_data.get("metric_mode", "intensity")
-        
         is_video = self.results_data.get('total_frames', 1) > 1
-        if is_video:
-            return f"{base_name}_{metric}_video.{extension}"
-        else:
-            return f"{base_name}_{metric}_image.{extension}"
-
-    def save_data_json(self):
-        if not self.results_data:
-            return
+        return f"{base_name}_{metric}_{'video' if is_video else 'image'}.{extension}"
         
+    def save_data_json(self):
+        if not self.results_data: return
         default_name = self._generate_default_filename("json")
         filepath = filedialog.asksaveasfilename(
             initialfile=default_name,
             defaultextension=".json",
             filetypes=[("JSON", "*.json")]
         )
-        if not filepath:
-            return
+        if not filepath: return
             
         try:
             is_video = self.results_data.get('total_frames', 1) > 1
-            
-            # Use a deep copy to avoid modifying the original data
             numerical_data_copy = [dict(item) for item in self.results_data.get("numerical_data", [])]
             for item in numerical_data_copy:
-                 # Ensure all numpy types are converted to native python types for JSON serialization
-                item['well_id'] = int(item['well_id'])
-                item['intensity'] = float(item['intensity'])
-                item['frame'] = int(item['frame'])
+                for key, val in item.items():
+                    if isinstance(val, np.generic): item[key] = val.item()
 
             output_data = {
                 "analysis_info": {
@@ -475,9 +488,7 @@ class ResultsTab(ttk.Frame):
             messagebox.showerror("Save Error", f"Could not save the JSON file: {e}")
             
     def save_data_excel(self):
-        if not self.results_data:
-            return
-
+        if not self.results_data: return
         if not OPENPYXL_AVAILABLE:
             messagebox.showerror(
                 "Dependency Missing",
@@ -492,83 +503,60 @@ class ResultsTab(ttk.Frame):
             defaultextension=".xlsx",
             filetypes=[("Excel Workbook", "*.xlsx")]
         )
-        if not filepath:
-            return
+        if not filepath: return
             
         try:
             wb = openpyxl.Workbook()
-            ws_info = wb.active
-            ws_info.title = "General Info"
-            ws_avg = wb.create_sheet("Average Intensity Data")
-            ws_peak = wb.create_sheet("Peak Intensity Data")
-
+            is_video = self.results_data.get('total_frames', 1) > 1
+            
+            ws_summary = wb.active
+            ws_summary.title = "Summary"
             info = {
                 "Source Filename": os.path.basename(self.results_data.get("video_path", "N/A")),
                 "Analysis Timestamp": self.results_data.get("analysis_timestamp"),
-                "Total Frames": self.results_data.get("total_frames"),
-                "FPS": self.results_data.get("fps"),
-                "Duration (seconds)": self.results_data.get("duration_seconds"),
-                "Metric Mode for UI": self.results_data.get("metric_mode"),
-                "Sample Rate": self.results_data.get("sample_rate")
+                "Metric Mode Used": self.results_data.get("metric_mode"),
             }
-            ws_info.append(["Parameter", "Value"])
+            if is_video:
+                info.update({
+                    "Total Frames": self.results_data.get("total_frames"),
+                    "FPS": self.results_data.get("fps"),
+                    "Duration (seconds)": self.results_data.get("duration_seconds"),
+                    "Sample Rate": self.results_data.get("sample_rate")
+                })
+            ws_summary.append(["Parameter", "Value"])
             for key, value in info.items():
-                ws_info.append([key, value])
+                ws_summary.append([key, value])
 
-            def _populate_data_sheet(worksheet, data_list, sample_rate):
-                if not data_list: return
-                header = ["Frame Number"] + [f"Well {i+1}" for i in range(len(data_list))]
-                worksheet.append(header)
-                max_len = max(len(col) for col in data_list) if data_list else 0
-                for i in range(max_len):
-                    frame_num = i * sample_rate
-                    row_data = [data_list[j][i] if i < len(data_list[j]) else None for j in range(len(data_list))]
-                    worksheet.append([frame_num] + row_data)
+            ws_results = wb.create_sheet("Results")
+            header = ["Well ID", "Intensity"]
+            if is_video:
+                header.append("Frame #")
+            ws_results.append(header)
+            for item in self.results_data['numerical_data']:
+                row = [item['well_id'] + 1, item['intensity']]
+                if is_video:
+                    row.append(item['frame'])
+                ws_results.append(row)
 
-            sample_rate = self.results_data.get("sample_rate", 1)
-            _populate_data_sheet(ws_avg, self.results_data.get("average_intensity_data"), sample_rate)
-            _populate_data_sheet(ws_peak, self.results_data.get("peak_intensity_data"), sample_rate)
+            if is_video:
+                def _populate_data_sheet(worksheet, data_list, sample_rate):
+                    if not data_list: return
+                    header = ["Frame Number"] + [f"Well {i+1}" for i in range(len(data_list))]
+                    worksheet.append(header)
+                    max_len = max(len(col) for col in data_list) if data_list else 0
+                    for i in range(max_len):
+                        frame_num = i * sample_rate
+                        row_data = [data_list[j][i] if i < len(data_list[j]) else None for j in range(len(data_list))]
+                        worksheet.append([frame_num] + row_data)
+                
+                ws_ts = wb.create_sheet("Time Series Data")
+                sample_rate = self.results_data.get("sample_rate", 1)
+                _populate_data_sheet(ws_ts, self.results_data.get("intensity_data"), sample_rate)
 
             wb.save(filepath)
             messagebox.showinfo("Success", f"Excel data saved successfully to:\n{filepath}")
         except Exception as e:
             messagebox.showerror("Save Error", f"Could not save the Excel file: {e}")
-
-    def clear_results(self):
-        self.results_data = None
-        self.current_pil_image = None
-        self.photo_image = None
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        self.preview_label.config(image='', text="No results loaded.")
-        self.summary_text.config(state=tk.NORMAL)
-        self.summary_text.delete('1.0', tk.END)
-        self.summary_text.config(state=tk.DISABLED)
-        self.brightness_var.set(0)
-        self.contrast_var.set(1.0)
-        self.ax.clear()
-        self.ax.set_title('Intensity Plot')
-        self.ax.set_xlabel('')
-        self.ax.set_ylabel('')
-        self.canvas.draw()
-        self.set_controls_state(tk.DISABLED)
-
-    def set_controls_state(self, state):
-        is_video = False
-        if state == tk.NORMAL and self.results_data:
-            is_video = self.results_data.get('total_frames', 1) > 1
-
-        self.brightness_slider.config(state=state)
-        self.contrast_slider.config(state=state)
-        self.view_map_btn.config(state=state)
-        self.save_map_btn.config(state=state)
-        self.save_json_btn.config(state=state)
-        self.save_excel_btn.config(state=state)
-        self.clear_btn.config(state=state)
-        
-        # Only enable frame-saving buttons if it was a video analysis
-        self.save_frame_btn.config(state=tk.NORMAL if is_video else tk.DISABLED)
-        self.save_all_frames_btn.config(state=tk.NORMAL if is_video else tk.DISABLED)
 
     def cleanup(self):
         pass
