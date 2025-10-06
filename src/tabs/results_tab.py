@@ -1,13 +1,14 @@
 # tabs/results_tab.py
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
 import numpy as np
 import os
 import shutil
 import cv2
 import json
+from copy import deepcopy
 
 # Matplotlib imports for the interactive plot
 import matplotlib.pyplot as plt
@@ -37,6 +38,12 @@ class ResultsTab(ttk.Frame):
         self.brightness_var = tk.DoubleVar(value=0)
         self.contrast_var = tk.DoubleVar(value=1.0)
         
+        self._drag_data = {}
+        # --- NEW: Variables to manage sorting state ---
+        self._sort_column = None
+        self._sort_direction = 'asc'
+        self._user_defined_order_data = None # To store data before sorting
+
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         
@@ -58,14 +65,30 @@ class ResultsTab(ttk.Frame):
         tree_frame = ttk.LabelFrame(top_pane, text="Detected Wells", padding=5)
         top_pane.add(tree_frame, weight=1)
         self.tree = ttk.Treeview(tree_frame, columns=("Well ID", "Intensity", "Frame #"), show="headings")
-        self.tree.heading("Well ID", text="Well ID")
-        self.tree.heading("Intensity", text="Intensity")
-        self.tree.heading("Frame #", text="Frame #")
+        
+        # --- MODIFIED: Add command to headers for sorting ---
+        self.tree.heading("Well ID", text="Well ID", command=lambda: self.sort_by_column("Well ID"))
+        self.tree.heading("Intensity", text="Intensity", command=lambda: self.sort_by_column("Intensity"))
+        self.tree.heading("Frame #", text="Frame #", command=lambda: self.sort_by_column("Frame #"))
+
         self.tree.column("Well ID", width=80, anchor=tk.CENTER)
         self.tree.column("Intensity", width=120, anchor=tk.CENTER)
         self.tree.column("Frame #", width=100, anchor=tk.CENTER)
         self.tree.pack(expand=True, fill='both')
         self.tree.bind('<<TreeviewSelect>>', self.on_well_select)
+
+        self.tree.bind("<ButtonPress-1>", self.on_drag_start)
+        self.tree.bind("<B1-Motion>", self.on_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self.on_drag_stop)
+
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="Rename", command=self.rename_well)
+        self.context_menu.add_command(label="Move Up", command=lambda: self.move_well(-1))
+        self.context_menu.add_command(label="Move Down", command=lambda: self.move_well(1))
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Delete", command=self.delete_well)
+        self.tree.bind("<Button-3>", self.show_context_menu)
+
         preview_frame = ttk.LabelFrame(top_pane, text="Preview", padding=5)
         preview_frame.columnconfigure(1, weight=1)
         preview_frame.rowconfigure(0, weight=1)
@@ -133,31 +156,123 @@ class ResultsTab(ttk.Frame):
         self.clear_results()
         self.results_data = results_package
         
-        is_video = self.results_data.get('total_frames', 1) > 1
-        self.tree.heading("Intensity", text="Peak Intensity" if is_video else "Intensity")
         for item in self.results_data['numerical_data']:
-            self.tree.insert('', tk.END, values=(f"Well {item['well_id']+1}", f"{item['intensity']:.2f}", item['frame'] if is_video else "-"))
-            
-        self.summary_text.config(state=tk.NORMAL)
-        self.summary_text.insert(tk.END, self.results_data['summary_text'])
-        self.summary_text.config(state=tk.DISABLED)
-        self._update_intensity_plot()
+            item['display_name'] = f"Well {item['well_id'] + 1}"
+
+        self._refresh_all_views()
         
         self.set_controls_state(tk.NORMAL)
-
         self.view_well_map()
         
         if self.tree.get_children():
             first_item = self.tree.get_children()[0]
+            self.tree.selection_set(first_item)
             self.tree.focus(first_item)
 
+    def on_drag_start(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            self._drag_data['item'] = iid
+            self._drag_data['index'] = self.tree.index(iid)
+
+    def on_drag_motion(self, event):
+        if not self._drag_data.get('item'):
+            return
+        
+        target_iid = self.tree.identify_row(event.y)
+        if target_iid:
+            self.tree.move(self._drag_data['item'], '', self.tree.index(target_iid))
+
+    def on_drag_stop(self, event):
+        if not self._drag_data.get('item'):
+            return
+
+        start_index = self._drag_data.get('index', -1)
+        final_index = self.tree.index(self._drag_data['item'])
+
+        item_id = self._drag_data['item']
+        self._drag_data = {}
+        
+        if start_index != -1 and start_index != final_index:
+            self._reorder_data(start_index, final_index)
+            self._renumber_well_ids()
+            self._cancel_sort() # Manual reordering cancels any active sort
+            
+            self._update_summary_text()
+            self._update_intensity_plot()
+            self.view_well_map()
+            
+            self.tree.selection_set(item_id)
+            self.tree.focus(item_id)
+
+    def show_context_menu(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            self.tree.selection_set(iid)
+            index = self.tree.index(iid)
+            last_index = len(self.tree.get_children()) - 1
+            
+            self.context_menu.entryconfig("Move Up", state="normal" if index > 0 else "disabled")
+            self.context_menu.entryconfig("Move Down", state="normal" if index < last_index else "disabled")
+            
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def rename_well(self):
+        selected_items = self.tree.selection()
+        if not selected_items: return
+        item_id = selected_items[0]
+        
+        well_index = self.tree.index(item_id)
+        current_name = self.results_data['numerical_data'][well_index]['display_name']
+        
+        new_name = simpledialog.askstring("Rename Well", "Enter new name:", initialvalue=current_name)
+        if new_name and new_name.strip():
+            self.results_data['numerical_data'][well_index]['display_name'] = new_name.strip()
+            self._cancel_sort() # Treat rename as a manual change
+            self._refresh_all_views(keep_selection=True)
+
+    def delete_well(self):
+        selected_items = self.tree.selection()
+        if not selected_items: return
+        item_id = selected_items[0]
+        
+        well_index = self.tree.index(item_id)
+        well_name = self.results_data['numerical_data'][well_index]['display_name']
+
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{well_name}'? This cannot be undone."):
+            keys_to_update = ['numerical_data', 'well_rois', 'intensity_data', 'average_intensity_data', 'peak_intensity_data']
+            for key in keys_to_update:
+                if key in self.results_data and len(self.results_data[key]) > well_index:
+                    del self.results_data[key][well_index]
+            
+            self._renumber_well_ids()
+            self._cancel_sort()
+            self._refresh_all_views()
+
+    def move_well(self, direction):
+        selected_items = self.tree.selection()
+        if not selected_items: return
+        item_id = selected_items[0]
+
+        current_index = self.tree.index(item_id)
+        new_index = current_index + direction
+        
+        if not (0 <= new_index < len(self.results_data['numerical_data'])):
+            return
+
+        self._reorder_data(current_index, new_index)
+        self._renumber_well_ids()
+        self._cancel_sort() # Manual reordering cancels any active sort
+        self._refresh_all_views(keep_selection=True, new_selection_index=new_index)
+
     def on_well_select(self, event):
+        if self._drag_data.get('item'):
+            return
+
         selected_items = self.tree.selection()
         if not selected_items: return
         
-        item_data = self.tree.item(selected_items[0])
-        well_id_str = item_data['values'][0]
-        well_index = int(well_id_str.split(' ')[1]) - 1
+        well_index = self.tree.index(selected_items[0])
         
         if self.results_data:
             pil_image = self._generate_peak_frame_image(well_index)
@@ -214,6 +329,7 @@ class ResultsTab(ttk.Frame):
 
     def clear_results(self):
         self.results_data = None
+        self._cancel_sort()
         self.current_pil_image = None
         self.photo_image = None
         self.is_showing_well_map = False
@@ -266,6 +382,86 @@ class ResultsTab(ttk.Frame):
             self.after_cancel(self._resize_plot_job_id)
         self._resize_plot_job_id = self.after(300, self._update_intensity_plot)
 
+    def _renumber_well_ids(self):
+        if not self.results_data or 'numerical_data' not in self.results_data: return
+        for i, item in enumerate(self.results_data['numerical_data']):
+            item['well_id'] = i
+
+    def _refresh_all_views(self, keep_selection=False, new_selection_index=None):
+        selection_index = -1
+        if keep_selection:
+            selected_items = self.tree.selection()
+            if selected_items:
+                selection_index = self.tree.index(selected_items[0])
+        
+        if new_selection_index is not None:
+            selection_index = new_selection_index
+
+        self._refresh_treeview()
+        self._update_summary_text()
+        self._update_intensity_plot()
+        self.view_well_map() 
+
+        if selection_index != -1 and selection_index < len(self.tree.get_children()):
+            new_item_id = self.tree.get_children()[selection_index]
+            self.tree.selection_set(new_item_id)
+            self.tree.focus(new_item_id)
+
+    def _reorder_data(self, start_index, end_index):
+        """Moves an item from a start index to an end index in all data lists."""
+        keys_to_update = [
+            'numerical_data', 'well_rois', 'intensity_data', 
+            'average_intensity_data', 'peak_intensity_data'
+        ]
+        for key in keys_to_update:
+            if key in self.results_data and self.results_data[key]:
+                try:
+                    item = self.results_data[key].pop(start_index)
+                    self.results_data[key].insert(end_index, item)
+                except IndexError:
+                    pass
+
+    def _refresh_treeview(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        if not self.results_data: return
+        
+        is_video = self.results_data.get('total_frames', 1) > 1
+        self.tree.heading("Intensity", text="Peak Intensity" if is_video else "Intensity")
+        
+        for item in self.results_data['numerical_data']:
+            display_name = item.get('display_name', f"Well {item['well_id'] + 1}")
+            self.tree.insert('', tk.END, values=(
+                display_name,
+                f"{item['intensity']:.2f}",
+                item['frame'] if is_video else "-"
+            ))
+
+    def _update_summary_text(self):
+        if not self.results_data: return
+        
+        metric_mode = self.results_data.get('metric_mode', 'average')
+        source_path = self.results_data.get('video_path', 'N/A')
+        
+        summary_text = f"--- Analysis Report ---\n"
+        summary_text += f"Source: {os.path.basename(source_path)}\n"
+        summary_text += f"Wells Detected: {len(self.results_data['numerical_data'])}\n"
+        summary_text += f"Metric: {'Average' if metric_mode == 'average' else 'Peak'} Intensity\n\n"
+        
+        for result in self.results_data['numerical_data']:
+            display_name = result.get('display_name', f"Well {result['well_id'] + 1}")
+            summary_text += f"{display_name}: Intensity of {result['intensity']:.2f}"
+            if self.results_data.get('total_frames', 1) > 1:
+                 summary_text += f" at Frame {result['frame']}\n"
+            else:
+                 summary_text += "\n"
+
+        self.summary_text.config(state=tk.NORMAL)
+        self.summary_text.delete('1.0', tk.END)
+        self.summary_text.insert(tk.END, summary_text)
+        self.summary_text.config(state=tk.DISABLED)
+
     def _update_intensity_plot(self):
         if not self.results_data: return
         self.ax.clear()
@@ -277,7 +473,8 @@ class ResultsTab(ttk.Frame):
             for i, well_data in enumerate(intensity_data):
                 num_samples = len(well_data)
                 frame_numbers = np.arange(num_samples) * sample_rate
-                self.ax.plot(frame_numbers, well_data, label=f'Well {i+1}')
+                label = self.results_data['numerical_data'][i].get('display_name', f'Well {i+1}')
+                self.ax.plot(frame_numbers, well_data, label=label)
                 for peak in peak_results:
                     if peak['well_id'] == i:
                         self.ax.plot(peak['frame'], peak['intensity'], 'ro', markersize=8); break
@@ -285,17 +482,87 @@ class ResultsTab(ttk.Frame):
             self.ax.set_xlabel('Frame Number'); self.ax.set_ylabel('Brightness'); self.ax.legend()
         else:
             results = self.results_data['numerical_data']
-            well_labels = [f"Well {r['well_id'] + 1}" for r in results]
+            well_labels = [r.get('display_name', f"Well {r['well_id'] + 1}") for r in results]
             intensities = [r['intensity'] for r in results]
             self.ax.bar(well_labels, intensities, color='cyan')
             self.ax.set_title('Well Intensity', fontsize=12)
             self.ax.set_xlabel('Well ID'); self.ax.set_ylabel('Brightness'); self.ax.tick_params(axis='x', rotation=45)
         self.ax.grid(True, linestyle='--', alpha=0.6); self.fig.tight_layout(); self.canvas.draw()
+    
+    # --- NEW: Methods for sorting ---
+    def _cancel_sort(self):
+        """Resets any active sort and clears header text."""
+        self._sort_column = None
+        self._sort_direction = 'asc'
+        self._user_defined_order_data = None
+        self._update_header_text()
+
+    def _update_header_text(self, sort_col=None, direction=None):
+        """Updates column headers with sort indicators."""
+        for col in ("Well ID", "Intensity", "Frame #"):
+            text = col
+            if col == sort_col:
+                arrow = ' ↑' if direction == 'asc' else ' ↓'
+                text += arrow
+            self.tree.heading(col, text=text)
+
+    def sort_by_column(self, col):
+        """Main handler for the 3-click column sort."""
+        if self._sort_column == col and self._sort_direction == 'desc':
+            # Third click: Revert to user-defined order
+            if self._user_defined_order_data:
+                self.results_data = self._user_defined_order_data
+                self._user_defined_order_data = None
+            self._cancel_sort()
+            self._refresh_all_views()
+            return
+
+        # First or second click
+        if self._sort_column != col:
+            # First click on a new column: save current order and set to ascending
+            self._user_defined_order_data = deepcopy(self.results_data)
+            self._sort_column = col
+            self._sort_direction = 'asc'
+        else:
+            # Second click on the same column: switch to descending
+            self._sort_direction = 'desc'
+
+        # --- Sorting Logic ---
+        data = self._user_defined_order_data['numerical_data']
+        
+        # Create a list of original indices to determine the new order
+        indices = list(range(len(data)))
+
+        # Determine the key for sorting
+        if col == "Well ID":
+            key_func = lambda i: data[i]['display_name']
+        elif col == "Intensity":
+            key_func = lambda i: data[i]['intensity']
+        elif col == "Frame #":
+            key_func = lambda i: data[i]['frame']
+        else:
+            return
+
+        # Sort the indices based on the data they point to
+        indices.sort(key=key_func, reverse=(self._sort_direction == 'desc'))
+
+        # Create a new sorted data dictionary using the sorted indices
+        sorted_data = {}
+        for key, data_list in self._user_defined_order_data.items():
+            if isinstance(data_list, list) and len(data_list) == len(data):
+                sorted_data[key] = [data_list[i] for i in indices]
+            else:
+                sorted_data[key] = data_list # Copy over non-list or mismatched-length data
+
+        self.results_data = sorted_data
+        
+        self._update_header_text(col, self._sort_direction)
+        self._refresh_all_views()
         
     def _generate_peak_frame_image(self, well_index):
         if not self.results_data: return None
         source_path = self.results_data['video_path']
-        peak_info = next((item for item in self.results_data['numerical_data'] if item['well_id'] == well_index), None)
+        peak_info = self.results_data['numerical_data'][well_index]
         if not peak_info: return None
         roi = self.results_data['well_rois'][well_index]
         is_video = self.results_data.get('total_frames', 1) > 1
@@ -318,7 +585,8 @@ class ResultsTab(ttk.Frame):
                 cv2.circle(frame, center=peak_location, radius=8, color=(255, 255, 0), thickness=2)
         (x, y, w, h) = roi
         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-        info_text = f"Well {well_index+1}: {peak_info['intensity']:.2f}"
+        display_name = peak_info.get('display_name', f"Well {well_index+1}")
+        info_text = f"{display_name}: {peak_info['intensity']:.2f}"
         cv2.putText(frame, info_text, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
@@ -346,26 +614,17 @@ class ResultsTab(ttk.Frame):
                     r1[1] + r1[3] < r2[1] or
                     r1[1] > r2[1] + r2[3])
     
-    # --- MODIFIED ---
     def _generate_annotated_well_map(self):
-        """
-        Generates the well map with non-overlapping labels.
-        Also draws peak pixel markers if the analysis was run in peak mode.
-        """
         max_frame = self.results_data['max_intensity_frame']
         rois = self.results_data['well_rois']
         annotated_image = cv2.cvtColor(max_frame, cv2.COLOR_GRAY2BGR)
 
-        # --- NEW: Draw peak location circles if in peak mode ---
         if self.results_data.get("metric_mode") == 'peak':
             peak_data = self.results_data.get('numerical_data', [])
             for item in peak_data:
                 peak_location = item.get('peak_location')
                 if peak_location:
-                    # Use the same style as the single-well preview for consistency
-                    # BGR color for Cyan is (255, 255, 0)
                     cv2.circle(annotated_image, center=peak_location, radius=8, color=(255, 255, 0), thickness=2)
-        # --- END NEW SECTION ---
 
         placed_text_rects = []
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -378,7 +637,7 @@ class ResultsTab(ttk.Frame):
 
         for i, (x, y, w, h) in enumerate(rois):
             cv2.rectangle(annotated_image, (x, y), (x + w, y + h), text_color, box_thickness)
-            well_text = f'Well {i+1}'
+            well_text = self.results_data['numerical_data'][i].get('display_name', f'Well {i+1}')
             (text_w, text_h), baseline = cv2.getTextSize(well_text, font, font_scale, font_thickness)
             box_center = (x + w // 2, y + h // 2)
             
@@ -426,7 +685,9 @@ class ResultsTab(ttk.Frame):
             for i in range(num_wells):
                 pil_image = self._generate_peak_frame_image(i)
                 if pil_image:
-                    filename = f'peak_frame_well_{i+1}.png'
+                    display_name = self.results_data['numerical_data'][i].get('display_name', f'well_{i+1}')
+                    safe_filename = "".join([c for c in display_name if c.isalpha() or c.isdigit() or c in (' ', '-')]).rstrip().replace(' ', '_')
+                    filename = f'peak_frame_{safe_filename}.png'
                     dest_path = os.path.join(directory, filename)
                     pil_image.save(dest_path)
             messagebox.showinfo("Success", f"Successfully saved peak frames to:\n{directory}")
@@ -469,14 +730,14 @@ class ResultsTab(ttk.Frame):
                 },
                 "peak_results": numerical_data_copy,
                 "well_rois": [
-                    {"well_id": i, "x": r[0], "y": r[1], "width": r[2], "height": r[3]}
+                    {"well_id": i, "display_name": self.results_data['numerical_data'][i].get('display_name'), "x": r[0], "y": r[1], "width": r[2], "height": r[3]}
                     for i, r in enumerate(self.results_data.get("well_rois", []))
                 ]
             }
             
             if is_video:
                 output_data["intensity_timeseries"] = {
-                    f"well_{i+1}": [float(val) for val in data]
+                    self.results_data['numerical_data'][i].get('display_name', f"well_{i+1}"): [float(val) for val in data]
                     for i, data in enumerate(self.results_data.get("intensity_data", []))
                 }
 
@@ -528,12 +789,12 @@ class ResultsTab(ttk.Frame):
                 ws_summary.append([key, value])
 
             ws_results = wb.create_sheet("Results")
-            header = ["Well ID", "Intensity"]
+            header = ["Well Name", "Intensity"]
             if is_video:
                 header.append("Frame #")
             ws_results.append(header)
             for item in self.results_data['numerical_data']:
-                row = [item['well_id'] + 1, item['intensity']]
+                row = [item.get('display_name', item['well_id']+1), item['intensity']]
                 if is_video:
                     row.append(item['frame'])
                 ws_results.append(row)
@@ -541,7 +802,7 @@ class ResultsTab(ttk.Frame):
             if is_video:
                 def _populate_data_sheet(worksheet, data_list, sample_rate):
                     if not data_list: return
-                    header = ["Frame Number"] + [f"Well {i+1}" for i in range(len(data_list))]
+                    header = ["Frame Number"] + [self.results_data['numerical_data'][i].get('display_name', f"Well {i+1}") for i in range(len(data_list))]
                     worksheet.append(header)
                     max_len = max(len(col) for col in data_list) if data_list else 0
                     for i in range(max_len):
