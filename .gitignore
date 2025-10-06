@@ -1,10 +1,17 @@
+# dev docs
+backlog.md
 pastebin.md
+
+# video
 *.mp4
 *.avi
+
+# images
 *.png
 *.jpg
 *.jpeg
 *.gif
 *.bmp
+
+# python miscellaneous
 __pycache__/
-backlog.md
