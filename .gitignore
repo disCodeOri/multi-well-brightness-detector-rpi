@@ -1,3 +1,11 @@
+# testing
+output/
+
+# builds
+build/
+dist/
+WellIntensityAnalyzer.spec
+
 # dev docs
 backlog.md
 pastebin.md
