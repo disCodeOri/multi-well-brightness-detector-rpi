@@ -1,6 +1,6 @@
 numpy
 opencv-python
-Pillow
+pillow
 matplotlib
 openpyxl
 picamera2
