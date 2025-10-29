@@ -69,11 +69,24 @@ class IntervalDialog(tk.Toplevel):
 
         repeat_frame = ttk.Frame(main_frame)
         repeat_frame.pack(fill=tk.X, pady=10)
-        ttk.Label(repeat_frame, text="Repeat Count (0 = infinite):").pack(side=tk.LEFT)
-        self.repeat_spinbox = ttk.Spinbox(repeat_frame, from_=0, to=9999, width=7, command=self.update_total_time)
+        repeat_control_frame = ttk.Frame(repeat_frame)
+        repeat_control_frame.pack(side=tk.LEFT)
+        
+        ttk.Label(repeat_control_frame, text="Additional Repeat Count:").pack(side=tk.LEFT)
+        self.repeat_spinbox = ttk.Spinbox(repeat_control_frame, from_=0, to=9999, width=7, command=self.update_total_time)
         self.repeat_spinbox.set(self.config.get("repeat_count", 0))
         self.repeat_spinbox.bind('<KeyRelease>', lambda e: self.update_total_time())
         self.repeat_spinbox.pack(side=tk.LEFT, padx=5)
+        
+        # Add infinite repeat checkbox in a new row
+        self.infinite_repeat_var = tk.BooleanVar(value=self.config.get("infinite_repeat", False))
+        self.infinite_repeat_checkbox = ttk.Checkbutton(
+            repeat_control_frame, 
+            text="Infinite Repeats", 
+            variable=self.infinite_repeat_var,
+            command=self.update_total_time
+        )
+        self.infinite_repeat_checkbox.pack(side=tk.LEFT, padx=5)
         
         time_labels_frame = ttk.Frame(repeat_frame)
         time_labels_frame.pack(side=tk.RIGHT, padx=5)
@@ -158,10 +171,15 @@ class IntervalDialog(tk.Toplevel):
             self.total_duration_label.config(text="Total time for all cycles: N/A")
             return
 
-        if repeat_count == 0:
+        if self.infinite_repeat_var.get():
             self.total_duration_label.config(text="Total time for all cycles: Infinite")
+            # Disable repeat spinbox when infinite is checked
+            self.repeat_spinbox.config(state="disabled")
         else:
-            total_seconds_all_cycles = total_seconds * repeat_count
+            self.repeat_spinbox.config(state="normal")
+            # Calculate total time including first iteration plus repeats
+            total_cycles = repeat_count + 1  # Add 1 for the initial run
+            total_seconds_all_cycles = total_seconds * total_cycles
             m, s = divmod(total_seconds_all_cycles, 60)
             h, m = divmod(m, 60)
             d, h = divmod(h, 24)
@@ -174,7 +192,8 @@ class IntervalDialog(tk.Toplevel):
     def save_config(self):
         self.result = {
             "phases": self.phases,
-            "repeat_count": int(self.repeat_spinbox.get())
+            "repeat_count": int(self.repeat_spinbox.get()),
+            "infinite_repeat": self.infinite_repeat_var.get()
         }
         self.destroy()
         
@@ -509,16 +528,18 @@ class CaptureTab(ttk.Frame):
         if not self.interval_config.get("phases"): messagebox.showwarning("Warning", "No phases configured."); return
 
         total_seconds_per_cycle = sum(p.get('duration', 0) for p in self.interval_config['phases'])
+        is_infinite = self.interval_config.get('infinite_repeat', False)
         repeat_count = self.interval_config.get('repeat_count', 0)
 
-        if repeat_count > 0:
-            self.total_seconds_all_cycles = total_seconds_per_cycle * repeat_count
+        if is_infinite:
+            self.total_seconds_all_cycles = -1  # Infinite
+            self.total_time_left_label.config(text="Infinite")
+        else:
+            total_cycles = repeat_count + 1  # Add 1 for the initial run
+            self.total_seconds_all_cycles = total_seconds_per_cycle * total_cycles
             m, s = divmod(self.total_seconds_all_cycles, 60)
             h, m = divmod(m, 60)
             self.total_time_left_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
-        else:
-            self.total_seconds_all_cycles = -1 # Infinite
-            self.total_time_left_label.config(text="Infinite")
 
         self.is_interval_recording = True
         self.interval_button.config(text="Stop Interval Recording"); self.set_input_state(tk.DISABLED, is_interval=True)
