@@ -239,9 +239,28 @@ class PhaseDialog(tk.Toplevel):
         ttk.Button(button_frame, text="Cancel", command=self.cancel).pack(side=tk.RIGHT)
 
     def ok(self):
+        # Generate a sensible default name when user leaves the name blank
+        # or uses a generic "Untitled Phase". Include the action so the
+        # phase becomes e.g. "Untitled Record Phase 1" or
+        # "Untitled Wait Phase 1".
+        name = (self.name_var.get() or "").strip()
+        action = self.action_var.get() or "Record"
+        
+        if not name or name.lower() == "untitled phase":
+            # Get existing phase names from parent dialog
+            existing_names = [p.get("name", "") for p in self.master.phases]
+            
+            # Find the next available number for this action type
+            counter = 1
+            while True:
+                name = f"Untitled {action.title()} Phase {counter}"
+                if name not in existing_names:
+                    break
+                counter += 1
+
         self.result = {
-            "name": self.name_var.get() or "Untitled Phase",
-            "action": self.action_var.get(),
+            "name": name,
+            "action": action,
             "duration": self.duration_var.get()
         }
         self.destroy()
