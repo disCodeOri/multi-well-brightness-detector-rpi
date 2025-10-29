@@ -70,12 +70,19 @@ class IntervalDialog(tk.Toplevel):
         repeat_frame = ttk.Frame(main_frame)
         repeat_frame.pack(fill=tk.X, pady=10)
         ttk.Label(repeat_frame, text="Repeat Count (0 = infinite):").pack(side=tk.LEFT)
-        self.repeat_spinbox = ttk.Spinbox(repeat_frame, from_=0, to=9999, width=7)
+        self.repeat_spinbox = ttk.Spinbox(repeat_frame, from_=0, to=9999, width=7, command=self.update_total_time)
         self.repeat_spinbox.set(self.config.get("repeat_count", 0))
+        self.repeat_spinbox.bind('<KeyRelease>', lambda e: self.update_total_time())
         self.repeat_spinbox.pack(side=tk.LEFT, padx=5)
         
-        self.total_time_label = ttk.Label(repeat_frame, text="Total time per cycle: 0s")
-        self.total_time_label.pack(side=tk.RIGHT, padx=5)
+        time_labels_frame = ttk.Frame(repeat_frame)
+        time_labels_frame.pack(side=tk.RIGHT, padx=5)
+
+        self.total_time_label = ttk.Label(time_labels_frame, text="Total time per cycle: 0s")
+        self.total_time_label.pack(anchor='e')
+        
+        self.total_duration_label = ttk.Label(time_labels_frame, text="Total time for all cycles: 0s")
+        self.total_duration_label.pack(anchor='e')
 
         file_frame = ttk.Frame(main_frame)
         file_frame.pack(fill=tk.X, pady=5)
@@ -144,6 +151,25 @@ class IntervalDialog(tk.Toplevel):
         m, s = divmod(total_seconds, 60)
         h, m = divmod(m, 60)
         self.total_time_label.config(text=f"Total time per cycle: {h:02d}:{m:02d}:{s:02d}")
+
+        try:
+            repeat_count = int(self.repeat_spinbox.get())
+        except (ValueError, tk.TclError):
+            self.total_duration_label.config(text="Total time for all cycles: N/A")
+            return
+
+        if repeat_count == 0:
+            self.total_duration_label.config(text="Total time for all cycles: Infinite")
+        else:
+            total_seconds_all_cycles = total_seconds * repeat_count
+            m, s = divmod(total_seconds_all_cycles, 60)
+            h, m = divmod(m, 60)
+            d, h = divmod(h, 24)
+            
+            if d > 0:
+                self.total_duration_label.config(text=f"Total time for all cycles: {d}d {h:02d}:{m:02d}:{s:02d}")
+            else:
+                self.total_duration_label.config(text=f"Total time for all cycles: {h:02d}:{m:02d}:{s:02d}")
 
     def save_config(self):
         self.result = {
@@ -332,6 +358,7 @@ class CaptureTab(ttk.Frame):
         ttk.Label(self.interval_status_frame, text="Phase:").grid(row=0, column=0, sticky='w'); self.phase_label = ttk.Label(self.interval_status_frame, text="N/A"); self.phase_label.grid(row=0, column=1, sticky='w')
         ttk.Label(self.interval_status_frame, text="Time Left:").grid(row=1, column=0, sticky='w'); self.time_label = ttk.Label(self.interval_status_frame, text="00:00"); self.time_label.grid(row=1, column=1, sticky='w')
         ttk.Label(self.interval_status_frame, text="Cycle:").grid(row=2, column=0, sticky='w'); self.cycle_label = ttk.Label(self.interval_status_frame, text="0 / 0"); self.cycle_label.grid(row=2, column=1, sticky='w')
+        ttk.Label(self.interval_status_frame, text="Total Time Left:").grid(row=3, column=0, sticky='w'); self.total_time_left_label = ttk.Label(self.interval_status_frame, text="00:00:00"); self.total_time_left_label.grid(row=3, column=1, sticky='w')
         
         settings_frame = ttk.LabelFrame(controls_frame, text="Camera Settings", padding="10")
         settings_frame.pack(fill=tk.X, pady=10, anchor='n'); settings_frame.columnconfigure(1, weight=1)
@@ -480,6 +507,19 @@ class CaptureTab(ttk.Frame):
 
     def start_interval_recording_logic(self):
         if not self.interval_config.get("phases"): messagebox.showwarning("Warning", "No phases configured."); return
+
+        total_seconds_per_cycle = sum(p.get('duration', 0) for p in self.interval_config['phases'])
+        repeat_count = self.interval_config.get('repeat_count', 0)
+
+        if repeat_count > 0:
+            self.total_seconds_all_cycles = total_seconds_per_cycle * repeat_count
+            m, s = divmod(self.total_seconds_all_cycles, 60)
+            h, m = divmod(m, 60)
+            self.total_time_left_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
+        else:
+            self.total_seconds_all_cycles = -1 # Infinite
+            self.total_time_left_label.config(text="Infinite")
+
         self.is_interval_recording = True
         self.interval_button.config(text="Stop Interval Recording"); self.set_input_state(tk.DISABLED, is_interval=True)
         self.interval_status_frame.pack(fill=tk.X, pady=5); self.interval_status_label.place(relx=0.0, rely=1.0, anchor='sw')
@@ -513,6 +553,13 @@ class CaptureTab(ttk.Frame):
     def on_tick(self, time_remaining):
         def _update_ui():
             mins, secs = divmod(time_remaining, 60); self.time_label.config(text=f"{mins:02d}:{secs:02d}")
+            if self.total_seconds_all_cycles > 0:
+                self.total_seconds_all_cycles -= 1
+                m, s = divmod(self.total_seconds_all_cycles, 60)
+                h, m = divmod(m, 60)
+                self.total_time_left_label.config(text=f"{h:02d}:{m:02d}:{s:02d}")
+            elif self.total_seconds_all_cycles == -1:
+                self.total_time_left_label.config(text="Infinite")
         self.after(0, _update_ui)
 
     def on_complete(self):
