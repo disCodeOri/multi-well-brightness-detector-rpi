@@ -8,6 +8,7 @@ import os
 import shutil
 import cv2
 import json
+from components.draggable_treeview import DraggableTreeview
 from copy import deepcopy
 
 # Matplotlib imports for the interactive plot
@@ -24,6 +25,12 @@ except ImportError:
 
 
 class ResultsTab(ttk.Frame):
+    def on_drag_complete(self, start_index, final_index):
+        """Called when drag operation completes in the DraggableTreeview"""
+        self._reorder_data(start_index, final_index)
+        self._renumber_well_ids()
+        self._cancel_sort()  # Manual reordering cancels any active sort
+        self._refresh_all_views(keep_selection=True, new_selection_index=final_index)
     def __init__(self, parent):
         super().__init__(parent)
         
@@ -64,7 +71,8 @@ class ResultsTab(ttk.Frame):
         top_pane.pack(expand=True, fill='both')
         tree_frame = ttk.LabelFrame(top_pane, text="Detected Wells", padding=5)
         top_pane.add(tree_frame, weight=1)
-        self.tree = ttk.Treeview(tree_frame, columns=("Well ID", "Intensity", "Frame #"), show="headings")
+        self.tree = DraggableTreeview(tree_frame, columns=("Well ID", "Intensity", "Frame #"), show="headings")
+        self.tree.set_drag_callback(self.on_drag_complete)
         
         # --- MODIFIED: Add command to headers for sorting ---
         self.tree.heading("Well ID", text="Well ID", command=lambda: self.sort_by_column("Well ID"))
@@ -76,10 +84,6 @@ class ResultsTab(ttk.Frame):
         self.tree.column("Frame #", width=100, anchor=tk.CENTER)
         self.tree.pack(expand=True, fill='both')
         self.tree.bind('<<TreeviewSelect>>', self.on_well_select)
-
-        self.tree.bind("<ButtonPress-1>", self.on_drag_start)
-        self.tree.bind("<B1-Motion>", self.on_drag_motion)
-        self.tree.bind("<ButtonRelease-1>", self.on_drag_stop)
 
         self.context_menu = tk.Menu(self, tearoff=0)
         self.context_menu.add_command(label="Rename", command=self.rename_well)
@@ -169,41 +173,6 @@ class ResultsTab(ttk.Frame):
             self.tree.selection_set(first_item)
             self.tree.focus(first_item)
 
-    def on_drag_start(self, event):
-        iid = self.tree.identify_row(event.y)
-        if iid:
-            self._drag_data['item'] = iid
-            self._drag_data['index'] = self.tree.index(iid)
-
-    def on_drag_motion(self, event):
-        if not self._drag_data.get('item'):
-            return
-        
-        target_iid = self.tree.identify_row(event.y)
-        if target_iid:
-            self.tree.move(self._drag_data['item'], '', self.tree.index(target_iid))
-
-    def on_drag_stop(self, event):
-        if not self._drag_data.get('item'):
-            return
-
-        start_index = self._drag_data.get('index', -1)
-        final_index = self.tree.index(self._drag_data['item'])
-
-        item_id = self._drag_data['item']
-        self._drag_data = {}
-        
-        if start_index != -1 and start_index != final_index:
-            self._reorder_data(start_index, final_index)
-            self._renumber_well_ids()
-            self._cancel_sort() # Manual reordering cancels any active sort
-            
-            self._update_summary_text()
-            self._update_intensity_plot()
-            self.view_well_map()
-            
-            self.tree.selection_set(item_id)
-            self.tree.focus(item_id)
 
     def show_context_menu(self, event):
         iid = self.tree.identify_row(event.y)
@@ -265,34 +234,35 @@ class ResultsTab(ttk.Frame):
         self._cancel_sort() # Manual reordering cancels any active sort
         self._refresh_all_views(keep_selection=True, new_selection_index=new_index)
 
+
     def on_well_select(self, event):
+        """Handle selection change in the treeview and update the preview image."""
+        # If a drag operation is in progress (from other code paths), ignore selection
         if self._drag_data.get('item'):
             return
 
         selected_items = self.tree.selection()
-        if not selected_items: return
-        
-        well_index = self.tree.index(selected_items[0])
-        
-        if self.results_data:
-            pil_image = self._generate_peak_frame_image(well_index)
-            if pil_image:
-                self._load_image_to_preview(pil_image)
-                self.is_showing_well_map = False
-                self._update_map_context_button()
-                self.set_controls_state(tk.NORMAL)
+        if not selected_items or not self.results_data:
+            return
 
-    def view_well_map(self):
-        if not self.results_data: return
+        well_index = self.tree.index(selected_items[0])
+
         try:
-            annotated_image_np = self._generate_annotated_well_map()
-            pil_image = Image.fromarray(cv2.cvtColor(annotated_image_np, cv2.COLOR_BGR2RGB))
-            self._load_image_to_preview(pil_image)
-            self.is_showing_well_map = True
-            self._update_map_context_button()
-            self.set_controls_state(tk.NORMAL)
+            if self.is_showing_well_map:
+                annotated = self._generate_annotated_well_map()
+                if annotated is not None:
+                    pil = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
+                    self._load_image_to_preview(pil)
+            else:
+                pil = self._generate_peak_frame_image(well_index)
+                if pil:
+                    self._load_image_to_preview(pil)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not generate the well map view: {e}")
+            messagebox.showerror("Preview Error", f"Could not generate preview: {e}")
+
+        # Ensure the map/context button label/state is correct
+        self._update_map_context_button()
+
 
     def save_well_map(self):
         if not self.current_pil_image or not self.is_showing_well_map:

@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from PIL import Image, ImageTk
 import os
 from datetime import datetime
+from components.draggable_treeview import DraggableTreeview
 import threading
 import json
 import cv2
@@ -40,11 +41,12 @@ class IntervalDialog(tk.Toplevel):
         tree_frame = ttk.Frame(main_frame)
         tree_frame.pack(expand=True, fill=tk.BOTH, pady=(0, 10))
         
-        self.tree = ttk.Treeview(tree_frame, columns=("Name", "Action", "Duration"), show="headings")
+        self.tree = DraggableTreeview(tree_frame, columns=("Name", "Action", "Duration"), show="headings")
         self.tree.heading("Name", text="Name")
         self.tree.heading("Action", text="Action")
         self.tree.heading("Duration", text="Duration (s)")
         self.tree.column("Duration", width=100, anchor=tk.CENTER)
+        self.tree.set_drag_callback(self.on_drag_complete)
         self.tree.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
         
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -153,6 +155,14 @@ class IntervalDialog(tk.Toplevel):
     def cancel(self):
         self.result = None
         self.destroy()
+
+    def on_drag_complete(self, start_index, final_index):
+        """Called when drag operation completes in the DraggableTreeview"""
+        if 0 <= start_index < len(self.phases) and 0 <= final_index < len(self.phases):
+            # Reorder the phases list
+            phase = self.phases.pop(start_index)
+            self.phases.insert(final_index, phase)
+            self.update_total_time()
 
     def load_pattern(self):
         filepath = filedialog.askopenfilename(
