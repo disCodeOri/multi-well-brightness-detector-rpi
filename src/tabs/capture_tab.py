@@ -471,7 +471,11 @@ class CaptureTab(ttk.Frame):
             self.stream_button.config(state=tk.NORMAL if self.camera.get_status() != CameraHandler.STATUS_STOPPED else state)
             self.capture_button.config(state=tk.DISABLED if self.camera.get_status() == CameraHandler.STATUS_STOPPED else tk.NORMAL)
             self.record_button.config(state=tk.DISABLED if self.camera.get_status() == CameraHandler.STATUS_STOPPED else tk.NORMAL)
-            self.configure_intervals_button.config(state=state)
+            # If camera is running, configure intervals button should be enabled, otherwise use the passed state
+            if self.camera.get_status() == CameraHandler.STATUS_RUNNING:
+                self.configure_intervals_button.config(state=tk.NORMAL)
+            else:
+                self.configure_intervals_button.config(state=state)
 
     def update_frame(self):
         if self.camera.get_status() != CameraHandler.STATUS_RUNNING: return
