@@ -336,6 +336,7 @@ class CaptureTab(ttk.Frame):
         self.update_id = None
         self.scheduler = None
         self.is_interval_recording = False
+        self.current_session_dir = None
 
         self.brightness_var = tk.DoubleVar(value=0)
         self.contrast_var = tk.DoubleVar(value=1.0)
@@ -531,6 +532,29 @@ class CaptureTab(ttk.Frame):
     def start_interval_recording_logic(self):
         if not self.interval_config.get("phases"): messagebox.showwarning("Warning", "No phases configured."); return
 
+        # Prompt for folder name
+        folder_name = simpledialog.askstring("Interval Recording", "Enter a name for this recording session (or leave blank for auto-generation):")
+        if folder_name is None:  # User clicked Cancel
+            return
+        
+        # If no name provided, generate an automatic name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if not folder_name:
+            folder_name = f"interval_session_{timestamp}"
+        else:
+            # Clean the folder name to be safe for filesystem
+            folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).strip()
+            if not folder_name:  # If after cleaning the name becomes empty
+                folder_name = f"interval_session_{timestamp}"
+                
+        # Create the session directory
+        self.current_session_dir = os.path.join("output", "videos", folder_name)
+        try:
+            os.makedirs(self.current_session_dir, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not create recording directory: {e}")
+            return
+
         total_seconds_per_cycle = sum(p.get('duration', 0) for p in self.interval_config['phases'])
         is_infinite = self.interval_config.get('infinite_repeat', False)
         repeat_count = self.interval_config.get('repeat_count', 0)
@@ -555,6 +579,7 @@ class CaptureTab(ttk.Frame):
         if self.scheduler: self.scheduler.stop(); self.scheduler.join(); self.scheduler = None
         if self.recorder and self.recorder.is_recording(): self.recorder.stop(); self.recorder = None
         self.is_interval_recording = False
+        self.current_session_dir = None
         self.interval_button.config(text="Start Interval Recording"); self.set_input_state(tk.NORMAL, is_interval=False)
         self.interval_status_frame.pack_forget(); self.interval_status_label.place_forget(); print("Interval recording stopped by user.")
 
@@ -562,8 +587,8 @@ class CaptureTab(ttk.Frame):
         def _update_ui():
             if self.recorder and self.recorder.is_recording(): self.recorder.stop(); self.recorder = None
             if action.lower() == 'record':
-                output_dir = "output/videos"; os.makedirs(output_dir, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S"); file_path = os.path.join(output_dir, f"interval_rec_{timestamp}.mp4")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_path = os.path.join(self.current_session_dir, f"interval_rec_{timestamp}.mp4")
                 frame_size = self.camera.get_frame_size()
                 fps = self.camera.get_fps()
                 self.recorder = VideoRecorder(file_path, frame_size, fps=fps)
