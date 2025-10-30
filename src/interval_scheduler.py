@@ -30,12 +30,19 @@ class IntervalScheduler(threading.Thread):
             phases = self.schedule.get("phases", [])
             if not phases:
                 raise ValueError("Schedule contains no phases.")
-            
-            repeat_count = self.schedule.get("repeat_count", 1)
-            is_infinite = (repeat_count == 0)
-            
+            # New semantics:
+            # - 'repeat_count' in schedule_config represents additional repeats
+            #   beyond the first run (e.g. 0 -> one iteration, 1 -> two iterations)
+            # - 'infinite_repeat' (bool) controls whether the schedule runs forever
+            repeat_count = int(self.schedule.get("repeat_count", 0))
+            is_infinite = bool(self.schedule.get("infinite_repeat", False))
+
+            # total_cycles is number of full cycles to perform when not infinite
+            total_cycles = None if is_infinite else (repeat_count + 1)
+
             cycle_num = 0
-            while not self._stop_event.is_set() and (is_infinite or cycle_num < repeat_count):
+            # Loop until stop requested and cycles completed (or infinite)
+            while not self._stop_event.is_set() and (is_infinite or cycle_num < total_cycles):
                 cycle_num += 1
                 for phase_index, phase in enumerate(phases):
                     if self._stop_event.is_set(): break
@@ -45,6 +52,10 @@ class IntervalScheduler(threading.Thread):
                     duration = phase.get("duration", 0)
 
                     # Notify UI of phase change
+                    # Keep the callback signature the same: pass the configured
+                    # 'repeat_count' (additional repeats) so the UI can decide how
+                    # to display cycles. UI can also check the schedule for
+                    # 'infinite_repeat' if needed.
                     self.callbacks['on_phase_change'](
                         phase_name, duration, cycle_num, repeat_count, action
                     )

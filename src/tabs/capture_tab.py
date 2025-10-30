@@ -219,9 +219,12 @@ class IntervalDialog(tk.Toplevel):
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
+            # Support files that include the new 'infinite_repeat' flag.
             if "phases" in data and "repeat_count" in data:
                 self.phases = data["phases"]
-                self.repeat_spinbox.set(data["repeat_count"])
+                self.repeat_spinbox.set(data.get("repeat_count", 0))
+                # If file contains infinite_repeat, restore it; otherwise default False
+                self.infinite_repeat_var.set(bool(data.get("infinite_repeat", False)))
                 self.populate_tree()
                 self.update_total_time()
             else:
@@ -239,7 +242,10 @@ class IntervalDialog(tk.Toplevel):
         try:
             pattern_data = {
                 "phases": self.phases,
-                "repeat_count": int(self.repeat_spinbox.get())
+                # store repeat_count as additional repeats (0 means single run)
+                "repeat_count": int(self.repeat_spinbox.get()),
+                # store infinite_repeat flag explicitly
+                "infinite_repeat": bool(self.infinite_repeat_var.get())
             }
             with open(filepath, 'w') as f:
                 json.dump(pattern_data, f, indent=4)
@@ -596,8 +602,17 @@ class CaptureTab(ttk.Frame):
                 status_text = f"🔴 RECORDING: {phase_name}"
             else: status_text = f"⏸️ WAITING: {phase_name}"
             self.interval_status_label.config(text=status_text); self.phase_label.config(text=phase_name)
-            repeat_str = "∞" if repeat_count == 0 else str(repeat_count)
-            self.cycle_label.config(text=f"{cycle_num} / {repeat_str}")
+            # Determine total cycles using new semantics:
+            # - 'infinite_repeat' True -> show infinity
+            # - otherwise total_cycles = repeat_count (additional) + 1 (initial run)
+            is_infinite = bool(self.interval_config.get('infinite_repeat', False))
+            if is_infinite:
+                total_str = "∞"
+            else:
+                total_cycles = int(self.interval_config.get('repeat_count', 0)) + 1
+                total_str = str(total_cycles)
+
+            self.cycle_label.config(text=f"{cycle_num} / {total_str}")
         self.after(0, _update_ui)
 
     def on_tick(self, time_remaining):
